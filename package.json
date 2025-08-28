@@ -1,25 +1,48 @@
 {
-  "name": "azurael-launcher",
+  "name": "community-minecraft-launcher",
   "version": "1.0.0",
-  "description": "Minecraft Launcher для коммьюнити Azurael",
+  "description": "Простой лаунчер для модпаков Minecraft",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --enable-logging"
+    "build": "electron-builder",
+    "build-win": "electron-builder --win",
+    "dist": "electron-builder --publish=never"
+  },
+  "author": "Shooter",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^22.3.27",
+    "electron-builder": "^23.6.0"
   },
   "dependencies": {
-    "adm-zip": "^0.5.16",
-    "axios": "^1.11.0",
-    "minecraft-launcher-core": "^3.18.2"
+    "fs-extra": "^11.1.0",
+    "yauzl": "^2.10.0"
   },
-  "devDependencies": {
-    "electron": "^37.4.0"
-  },
-  "keywords": [
-    "minecraft",
-    "launcher",
-    "electron"
-  ],
-  "author": "Azurael Community",
-  "license": "ISC"
+  "build": {
+    "appId": "com.community.minecraft.launcher",
+    "productName": "Azurael Launcher",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!node_modules/electron/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
 }

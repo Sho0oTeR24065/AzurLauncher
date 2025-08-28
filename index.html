@@ -1,141 +1,536 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <title>Azurael Launcher</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Community Minecraft Launcher</title>
     <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
       body {
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        margin: 0;
-        padding: 20px;
-        min-height: 100vh;
-        display: flex;
-        flex-direction: column;
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        color: #333;
+        overflow: hidden;
       }
 
       .container {
-        background: rgba(255, 255, 255, 0.95);
-        border-radius: 15px;
-        padding: 30px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-        max-width: 500px;
-        margin: auto;
+        display: flex;
+        height: 100vh;
       }
 
-      h1 {
+      .sidebar {
+        width: 300px;
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        padding: 20px;
+        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+      }
+
+      .main-content {
+        flex: 1;
+        padding: 30px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .header {
         text-align: center;
-        color: #333;
         margin-bottom: 30px;
-        font-size: 24px;
+      }
+
+      .header h1 {
+        font-size: 2.5em;
+        color: white;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        margin-bottom: 10px;
+      }
+
+      .header p {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 1.1em;
       }
 
       .form-group {
         margin-bottom: 20px;
       }
 
-      label {
+      .form-group label {
         display: block;
         margin-bottom: 8px;
-        font-weight: 600;
-        color: #555;
+        font-weight: bold;
+        color: #333;
       }
 
-      select,
-      input[type="text"] {
+      .form-control {
         width: 100%;
         padding: 12px;
-        border: 2px solid #e1e5e9;
+        border: 2px solid #ddd;
         border-radius: 8px;
         font-size: 14px;
         transition: border-color 0.3s;
-        box-sizing: border-box;
       }
 
-      select:focus,
-      input[type="text"]:focus {
+      .form-control:focus {
         outline: none;
-        border-color: #667eea;
+        border-color: #2a5298;
       }
 
-      #playBtn {
-        width: 100%;
-        padding: 15px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
+      .modpack-list {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 2px solid #ddd;
         border-radius: 8px;
-        font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: transform 0.2s, box-shadow 0.2s;
+        background: white;
       }
 
-      #playBtn:hover {
+      .modpack-item {
+        padding: 15px;
+        border-bottom: 1px solid #eee;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .modpack-item:hover {
+        background-color: #f5f5f5;
+      }
+
+      .modpack-item.selected {
+        background-color: #e3f2fd;
+        border-left: 4px solid #2a5298;
+      }
+
+      .modpack-info h3 {
+        margin: 0 0 5px 0;
+        color: #333;
+        font-size: 1.1em;
+      }
+
+      .modpack-info p {
+        margin: 0;
+        color: #666;
+        font-size: 0.9em;
+      }
+
+      .modpack-status {
+        font-size: 1.2em;
+      }
+
+      .selected-modpack {
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 15px;
+        padding: 30px;
+        text-align: center;
+        max-width: 500px;
+        margin-bottom: 30px;
+      }
+
+      .selected-modpack h2 {
+        color: #2a5298;
+        margin-bottom: 10px;
+        font-size: 2em;
+      }
+
+      .selected-modpack .description {
+        color: #666;
+        margin-bottom: 15px;
+        font-size: 1.1em;
+      }
+
+      .selected-modpack .details {
+        display: flex;
+        justify-content: space-around;
+        margin: 20px 0;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 10px;
+      }
+
+      .detail-item {
+        text-align: center;
+      }
+
+      .detail-item .label {
+        font-weight: bold;
+        color: #333;
+        display: block;
+        font-size: 0.9em;
+      }
+
+      .detail-item .value {
+        color: #2a5298;
+        font-size: 1.1em;
+        margin-top: 5px;
+      }
+
+      .buttons {
+        display: flex;
+        gap: 15px;
+        justify-content: center;
+      }
+
+      .btn {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 25px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .btn:hover {
         transform: translateY(-2px);
         box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
       }
 
-      #playBtn:disabled {
-        background: #ccc;
+      .btn:disabled {
+        opacity: 0.6;
         cursor: not-allowed;
         transform: none;
-        box-shadow: none;
       }
 
-      #status {
-        margin-top: 20px;
-        padding: 12px;
-        background: #f8f9fa;
-        border-left: 4px solid #667eea;
-        border-radius: 4px;
+      .btn-primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      .btn-success {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+      }
+
+      .btn-download {
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+        color: white;
+      }
+
+      .progress-container {
+        width: 100%;
+        background-color: #f0f0f0;
+        border-radius: 25px;
+        overflow: hidden;
+        margin: 20px 0;
+        height: 30px;
+        position: relative;
+      }
+
+      .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea, #764ba2);
+        width: 0%;
+        transition: width 0.3s ease;
+        border-radius: 25px;
+      }
+
+      .progress-text {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #333;
+        font-weight: bold;
         font-size: 14px;
-        color: #555;
-        min-height: 20px;
       }
 
-      .error {
-        border-left-color: #dc3545 !important;
-        background: #f8d7da !important;
-        color: #721c24 !important;
+      .status {
+        text-align: center;
+        margin-top: 20px;
+        font-size: 1.1em;
+        font-weight: bold;
+      }
+
+      .status.success {
+        color: #28a745;
+      }
+
+      .status.error {
+        color: #dc3545;
+      }
+
+      .status.info {
+        color: #17a2b8;
+      }
+
+      .hidden {
+        display: none;
       }
     </style>
   </head>
   <body>
     <div class="container">
-      <h1>🚀 Azurael Minecraft Launcher</h1>
+      <div class="sidebar">
+        <div class="form-group">
+          <label for="username">Введите никнейм</label>
+          <input
+            type="text"
+            id="username"
+            class="form-control"
+            placeholder="Ваш никнейм"
+            maxlength="16"
+          />
+        </div>
 
-      <div class="form-group">
-        <label for="packSelect">Выберите сборку:</label>
-        <select id="packSelect">
-          <option value="">Загрузка сборок...</option>
-        </select>
+        <div class="form-group">
+          <label>Выберите модпак</label>
+          <div class="modpack-list" id="modpackList">
+            <!-- Модпаки загружаются динамически -->
+          </div>
+        </div>
       </div>
 
-      <div class="form-group">
-        <label for="username">Никнейм:</label>
-        <input
-          type="text"
-          id="username"
-          placeholder="Введите ник (3-16 символов)"
-          maxlength="16"
-        />
+      <div class="main-content">
+        <div class="header">
+          <h1>🎮 Community Launcher</h1>
+          <p>Выберите модпак и начните играть!</p>
+        </div>
+
+        <div class="selected-modpack" id="selectedModpack">
+          <h2 id="modpackName">Выберите модпак</h2>
+          <p class="description" id="modpackDescription">
+            Выберите модпак из списка слева
+          </p>
+
+          <div class="details" id="modpackDetails" style="display: none">
+            <div class="detail-item">
+              <span class="label">Версия</span>
+              <span class="value" id="modpackVersion">-</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Загрузчик</span>
+              <span class="value" id="modpackLoader">-</span>
+            </div>
+            <div class="detail-item">
+              <span class="label">Память</span>
+              <span class="value" id="modpackMemory">-</span>
+            </div>
+          </div>
+
+          <div class="progress-container hidden" id="progressContainer">
+            <div class="progress-bar" id="progressBar"></div>
+            <div class="progress-text" id="progressText">0%</div>
+          </div>
+
+          <div class="buttons">
+            <button
+              class="btn btn-download"
+              id="downloadBtn"
+              onclick="downloadModpack()"
+              disabled
+            >
+              📥 Скачать модпак
+            </button>
+            <button
+              class="btn btn-success"
+              id="launchBtn"
+              onclick="launchGame()"
+              disabled
+            >
+              🚀 Запустить игру
+            </button>
+          </div>
+        </div>
+
+        <div class="status" id="status">Загрузка...</div>
       </div>
-
-      <div class="form-group">
-        <label for="skinUrl">Скин (URL для сервера):</label>
-        <input
-          type="text"
-          id="skinUrl"
-          placeholder="https://example.com/skin.png (необязательно)"
-        />
-      </div>
-
-      <button id="playBtn">▶️ Играть</button>
-
-      <div id="status">Готов к запуску</div>
     </div>
 
-    <script src="renderer.js"></script>
+    <script>
+      const { ipcRenderer } = require("electron");
+
+      let modpacks = [];
+      let selectedModpack = null;
+
+      // Загружаем модпаки при запуске
+      async function loadModpacks() {
+        try {
+          modpacks = await ipcRenderer.invoke("get-modpacks");
+          renderModpackList();
+          updateStatus("Готов к работе", "success");
+        } catch (error) {
+          updateStatus("Ошибка загрузки модпаков", "error");
+        }
+      }
+
+      function renderModpackList() {
+        const listContainer = document.getElementById("modpackList");
+        listContainer.innerHTML = "";
+
+        modpacks.forEach((modpack, index) => {
+          const item = document.createElement("div");
+          item.className = "modpack-item";
+          item.onclick = () => selectModpack(index);
+
+          item.innerHTML = `
+                    <div class="modpack-info">
+                        <h3>${modpack.name}</h3>
+                        <p>${modpack.version} • ${modpack.modloader}</p>
+                    </div>
+                    <div class="modpack-status" id="status-${modpack.id}">⏳</div>
+                `;
+
+          listContainer.appendChild(item);
+
+          // Проверяем статус установки
+          checkModpackStatus(modpack, index);
+        });
+      }
+
+      async function checkModpackStatus(modpack, index) {
+        try {
+          const installed = await ipcRenderer.invoke(
+            "check-modpack-installed",
+            modpack.id
+          );
+          const statusElement = document.getElementById(`status-${modpack.id}`);
+          statusElement.textContent = installed ? "✅" : "📥";
+        } catch (error) {
+          console.error("Ошибка проверки статуса модпака:", error);
+        }
+      }
+
+      function selectModpack(index) {
+        // Убираем выделение с предыдущего элемента
+        document.querySelectorAll(".modpack-item").forEach((item) => {
+          item.classList.remove("selected");
+        });
+
+        // Выделяем текущий элемент
+        document
+          .querySelectorAll(".modpack-item")
+          [index].classList.add("selected");
+
+        selectedModpack = modpacks[index];
+        updateSelectedModpack();
+      }
+
+      async function updateSelectedModpack() {
+        if (!selectedModpack) return;
+
+        document.getElementById("modpackName").textContent =
+          selectedModpack.name;
+        document.getElementById("modpackDescription").textContent =
+          selectedModpack.description;
+        document.getElementById("modpackVersion").textContent =
+          selectedModpack.version;
+        document.getElementById("modpackLoader").textContent =
+          selectedModpack.modloader.toUpperCase();
+        document.getElementById("modpackMemory").textContent =
+          selectedModpack.memory;
+        document.getElementById("modpackDetails").style.display = "flex";
+
+        // Проверяем установлен ли модпак
+        const installed = await ipcRenderer.invoke(
+          "check-modpack-installed",
+          selectedModpack.id
+        );
+
+        document.getElementById("downloadBtn").disabled = installed;
+        document.getElementById("launchBtn").disabled = !installed;
+
+        if (installed) {
+          updateStatus("Модпак готов к запуску", "success");
+        } else {
+          updateStatus("Модпак требует скачивания", "info");
+        }
+      }
+
+      async function downloadModpack() {
+        if (!selectedModpack) return;
+
+        const downloadBtn = document.getElementById("downloadBtn");
+        const progressContainer = document.getElementById("progressContainer");
+        const progressBar = document.getElementById("progressBar");
+        const progressText = document.getElementById("progressText");
+
+        downloadBtn.disabled = true;
+        progressContainer.classList.remove("hidden");
+        updateStatus("Скачивание модпака...", "info");
+
+        // Слушаем прогресс скачивания
+        ipcRenderer.on("download-progress", (event, progress) => {
+          progressBar.style.width = progress + "%";
+          progressText.textContent = progress + "%";
+        });
+
+        try {
+          const result = await ipcRenderer.invoke(
+            "download-modpack",
+            selectedModpack
+          );
+
+          if (result.success) {
+            updateStatus("Модпак успешно установлен!", "success");
+            document.getElementById("launchBtn").disabled = false;
+
+            // Обновляем статус в списке
+            document.getElementById(
+              `status-${selectedModpack.id}`
+            ).textContent = "✅";
+          } else {
+            throw new Error(result.error);
+          }
+        } catch (error) {
+          updateStatus("Ошибка скачивания: " + error.message, "error");
+          downloadBtn.disabled = false;
+        }
+
+        progressContainer.classList.add("hidden");
+        progressBar.style.width = "0%";
+      }
+
+      async function launchGame() {
+        const username = document.getElementById("username").value.trim();
+
+        if (!username) {
+          updateStatus("Введите никнейм!", "error");
+          return;
+        }
+
+        if (!selectedModpack) {
+          updateStatus("Выберите модпак!", "error");
+          return;
+        }
+
+        updateStatus("Запуск игры...", "info");
+
+        try {
+          const result = await ipcRenderer.invoke(
+            "launch-minecraft",
+            username,
+            selectedModpack
+          );
+
+          if (result.success) {
+            updateStatus("Игра запущена!", "success");
+          } else {
+            throw new Error(result.error);
+          }
+        } catch (error) {
+          updateStatus("Ошибка запуска: " + error.message, "error");
+        }
+      }
+
+      function updateStatus(message, type) {
+        const statusElement = document.getElementById("status");
+        statusElement.textContent = message;
+        statusElement.className = "status " + type;
+      }
+
+      // Инициализация
+      loadModpacks();
+    </script>
   </body>
 </html>
