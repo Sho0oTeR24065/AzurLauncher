@@ -3,22 +3,138 @@
   <head>
     <meta charset="UTF-8" />
     <title>Azurael Launcher</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        margin: 0;
+        padding: 20px;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .container {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 15px;
+        padding: 30px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        max-width: 500px;
+        margin: auto;
+      }
+
+      h1 {
+        text-align: center;
+        color: #333;
+        margin-bottom: 30px;
+        font-size: 24px;
+      }
+
+      .form-group {
+        margin-bottom: 20px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #555;
+      }
+
+      select,
+      input[type="text"] {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #e1e5e9;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+        box-sizing: border-box;
+      }
+
+      select:focus,
+      input[type="text"]:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+
+      #playBtn {
+        width: 100%;
+        padding: 15px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
+      }
+
+      #playBtn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+      }
+
+      #playBtn:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      #status {
+        margin-top: 20px;
+        padding: 12px;
+        background: #f8f9fa;
+        border-left: 4px solid #667eea;
+        border-radius: 4px;
+        font-size: 14px;
+        color: #555;
+        min-height: 20px;
+      }
+
+      .error {
+        border-left-color: #dc3545 !important;
+        background: #f8d7da !important;
+        color: #721c24 !important;
+      }
+    </style>
   </head>
   <body>
-    <h1>Azurael Minecraft Launcher</h1>
+    <div class="container">
+      <h1>🚀 Azurael Minecraft Launcher</h1>
 
-    <label>Выберите сборку:</label>
-    <select id="packSelect"></select
-    ><br /><br />
+      <div class="form-group">
+        <label for="packSelect">Выберите сборку:</label>
+        <select id="packSelect">
+          <option value="">Загрузка сборок...</option>
+        </select>
+      </div>
 
-    <label>Никнейм:</label>
-    <input type="text" id="username" placeholder="Введите ник" /><br /><br />
+      <div class="form-group">
+        <label for="username">Никнейм:</label>
+        <input
+          type="text"
+          id="username"
+          placeholder="Введите ник (3-16 символов)"
+          maxlength="16"
+        />
+      </div>
 
-    <label>Скин (URL для сервера):</label>
-    <input type="text" id="skinUrl" placeholder="Ссылка на PNG" /><br /><br />
+      <div class="form-group">
+        <label for="skinUrl">Скин (URL для сервера):</label>
+        <input
+          type="text"
+          id="skinUrl"
+          placeholder="https://example.com/skin.png (необязательно)"
+        />
+      </div>
 
-    <button id="playBtn">Играть</button>
-    <div id="status"></div>
+      <button id="playBtn">▶️ Играть</button>
+
+      <div id="status">Готов к запуску</div>
+    </div>
 
     <script src="renderer.js"></script>
   </body>

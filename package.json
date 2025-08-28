@@ -1,11 +1,25 @@
 {
   "name": "azurael-launcher",
   "version": "1.0.0",
+  "description": "Minecraft Launcher для коммьюнити Azurael",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dev": "electron . --enable-logging"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "axios": "^1.11.0",
+    "minecraft-launcher-core": "^3.18.2"
   },
   "devDependencies": {
-    "electron": "^26.2.0"
-  }
+    "electron": "^37.4.0"
+  },
+  "keywords": [
+    "minecraft",
+    "launcher",
+    "electron"
+  ],
+  "author": "Azurael Community",
+  "license": "ISC"
 }
