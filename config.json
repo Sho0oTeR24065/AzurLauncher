@@ -1,0 +1,32 @@
+{
+  "java_path": "java",
+  "launcher_name": "Azurael Launcher",
+  "modpacks": [
+    {
+      "id": "industrial_1192",
+      "name": "Solo Leveling",
+      "version": "1.20.1",
+      "modloader": "forge",
+      "forge_version": "43.3.33",
+      "memory": "6G",
+      "download_url": "https://disk.yandex.ru/d/MxP368Y2o97QeQ",
+      "description": "Solo Leveling - Reawakening",
+      "author": "Azurael Team",
+      "minecraft_version": "1.20.1"
+    }
+  ],
+  "settings": {
+    "auto_update": true,
+    "keep_launcher_open": false,
+    "show_snapshots": false,
+    "default_memory": "4G",
+    "java_args": [
+      "-XX:+UnlockExperimentalVMOptions",
+      "-XX:+UseG1GC",
+      "-XX:G1NewSizePercent=20",
+      "-XX:G1ReservePercent=20",
+      "-XX:MaxGCPauseMillis=50",
+      "-XX:G1HeapRegionSize=32M"
+    ]
+  }
+}
