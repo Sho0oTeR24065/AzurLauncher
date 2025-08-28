@@ -51,7 +51,7 @@ class MinecraftLauncher {
         nodeIntegration: true,
         contextIsolation: false,
       },
-      icon: path.join(__dirname, "assets", "icon.ico"),
+      icon: path.join(__dirname, "assets", "icon.png"),
       autoHideMenuBar: true,
       resizable: false,
     });
