@@ -739,7 +739,6 @@ class MinecraftLauncher {
       "-XX:G1ReservePercent=20",
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
-      "-Djdk.module.main.class=cpw.mods.bootstraplauncher.BootstrapLauncher",
     ];
 
     // Для Java 17+ добавляем необходимые флаги для модлоадеров
@@ -751,9 +750,7 @@ class MinecraftLauncher {
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens=java.base/java.text=ALL-UNNAMED",
         "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
-        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-        // КРИТИЧНО: отключаем модульную систему
-        "-Djava.system.class.loader=java.lang.ClassLoader"
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
       );
 
       if (modloader === "forge" || modloader === "neoforge") {
@@ -1138,6 +1135,14 @@ class MinecraftLauncher {
     const classpath = [];
 
     // Главный jar файл
+    // Сначала добавляем библиотеки (они должны быть первыми)
+    const libsDir = path.join(instancePath, "libraries");
+    if (await fs.pathExists(libsDir)) {
+      const libJars = await this.findJarFiles(libsDir);
+      classpath.push(...libJars);
+    }
+
+    // Потом главный jar файл
     const mcVersion = modpack.minecraft_version;
     const forgeVersion = `${mcVersion}-${modpack.modloader}-${modpack.forge_version}`;
     const mainJar = path.join(
@@ -1149,13 +1154,6 @@ class MinecraftLauncher {
 
     if (await fs.pathExists(mainJar)) {
       classpath.push(mainJar);
-    }
-
-    // Библиотеки
-    const libsDir = path.join(instancePath, "libraries");
-    if (await fs.pathExists(libsDir)) {
-      const libJars = await this.findJarFiles(libsDir);
-      classpath.push(...libJars);
     }
 
     return classpath.join(path.delimiter);
