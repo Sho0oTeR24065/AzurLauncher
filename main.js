@@ -286,83 +286,45 @@ class MinecraftLauncher {
       "-XX:G1HeapRegionSize=32M"
     );
 
-    // КРИТИЧНО: Для Java 17+ радикально отключаем все что может конфликтовать
+    // КРИТИЧНО: Для Java 17+ исправляем флаги совместимости
     if (javaMainVersion >= 17) {
       console.log(
-        `Java ${javaMainVersion} обнаружена, применяем радикальные флаги совместимости`
+        `Java ${javaMainVersion} обнаружена, применяем исправленные флаги совместимости`
       );
 
-      // ПОЛНОСТЬЮ отключаем Nashorn engine и все связанные модули
+      // ГЛАВНОЕ ИСПРАВЛЕНИЕ: Открываем zipfs модуль
       args.push(
-        // Отключаем Nashorn и связанные модули
-        "-Djdk.module.illegalAccess.silent=true",
-        "-Djdk.nashorn.args=--no-deprecation-warning",
-        "-Dpolyglot.engine.WarnInterpreterOnly=false",
-
-        // Запрещаем загрузку проблемных модулей
-        "--limit-modules=java.base,java.logging,java.xml,java.desktop,java.management,java.security.jgss,java.instrument,java.naming,jdk.unsupported",
-
-        // Разрешаем все системные модули кроме проблемных
-        "--add-modules=java.base",
-        "--add-modules=java.logging",
-        "--add-modules=java.xml",
-        "--add-modules=java.desktop",
-        "--add-modules=java.management",
-        "--add-modules=java.naming",
-        "--add-modules=jdk.unsupported"
+        "--add-modules=jdk.zipfs",
+        "--add-opens=jdk.zipfs/jdk.nio.zipfs=ALL-UNNAMED"
       );
 
-      // Базовые флаги для работы с модульной системой
+      // Базовые флаги для модулей
       args.push(
-        // Основные флаги для отключения модулей
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED",
-        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
         "--add-opens=java.base/java.io=ALL-UNNAMED",
         "--add-opens=java.base/java.net=ALL-UNNAMED",
         "--add-opens=java.base/java.nio=ALL-UNNAMED",
         "--add-opens=java.base/java.security=ALL-UNNAMED",
         "--add-opens=java.base/java.text=ALL-UNNAMED",
-        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
+      );
 
-        // Открываем внутренние пакеты для ASM и Mixin
+      // Внутренние пакеты
+      args.push(
         "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
         "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
         "--add-opens=java.base/jdk.internal.reflect=ALL-UNNAMED",
-        "--add-opens=java.base/jdk.internal.math=ALL-UNNAMED",
-        "--add-opens=java.base/jdk.internal.module=ALL-UNNAMED",
-        "--add-opens=java.base/jdk.internal.util.jar=ALL-UNNAMED",
-        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
-
-        // Критично - открываем доступ к sun.misc
-        "--add-opens=java.base/sun.misc=ALL-UNNAMED",
-        "--add-opens=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        "--add-opens=java.base/sun.misc=ALL-UNNAMED"
       );
 
-      // Специфичные флаги для Forge/NeoForge
+      // Для Forge/NeoForge добавляем дополнительные флаги
       if (modloader === "forge" || modloader === "neoforge") {
-        console.log("Добавляем дополнительные флаги для Forge/NeoForge");
-
         args.push(
-          // Дополнительные opens для Forge
           "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-          "--add-opens=java.base/sun.nio.fs=ALL-UNNAMED",
-          "--add-opens=java.base/sun.net.dns=ALL-UNNAMED",
-          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
-          "--add-opens=java.base/sun.security.provider=ALL-UNNAMED",
-
-          // Для GUI и AWT
-          "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
-          "--add-opens=java.desktop/com.sun.imageio.plugins.png=ALL-UNNAMED",
-
-          // Для работы с сетью
-          "--add-opens=jdk.naming.dns/com.sun.jndi.dns=ALL-UNNAMED",
-
-          // Специально для современных версий MC
-          "--add-opens=java.base/java.lang.module=ALL-UNNAMED"
+          "--add-opens=java.desktop/sun.awt=ALL-UNNAMED"
         );
       }
     } else if (javaMainVersion >= 9) {
