@@ -29,17 +29,48 @@ class MinecraftLauncher {
   loadConfig() {
     const configPath = path.join(__dirname, "config.json");
 
-    if (!configPath) return;
-
     try {
       if (fs.existsSync(configPath)) {
         this.config = JSON.parse(fs.readFileSync(configPath, "utf8"));
       } else {
-        this.config = defaultConfig;
-        fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
+        this.config = {
+          java_path: "java",
+          launcher_name: "Azurael Launcher",
+          modpacks: [],
+          settings: {
+            auto_update: true,
+            keep_launcher_open: false,
+            show_snapshots: false,
+            default_memory: "6G",
+            java_args: [
+              "-XX:+UnlockExperimentalVMOptions",
+              "-XX:+UseG1GC",
+              "-XX:G1NewSizePercent=20",
+              "-XX:G1ReservePercent=20",
+              "-XX:MaxGCPauseMillis=50",
+              "-XX:G1HeapRegionSize=32M",
+              "-Dfml.earlyprogresswindow=false",
+              "-Dlog4j2.formatMsgNoLookups=true",
+              "-Dfile.encoding=UTF-8",
+            ],
+          },
+        };
+        fs.writeFileSync(configPath, JSON.stringify(this.config, null, 2));
       }
     } catch (error) {
-      this.config = defaultConfig;
+      console.error("Ошибка загрузки конфигурации:", error);
+      this.config = {
+        java_path: "java",
+        launcher_name: "Azurael Launcher",
+        modpacks: [],
+        settings: {
+          auto_update: true,
+          keep_launcher_open: false,
+          show_snapshots: false,
+          default_memory: "6G",
+          java_args: [],
+        },
+      };
     }
   }
 
@@ -237,7 +268,7 @@ class MinecraftLauncher {
   getJVMArgs(modpack, javaVersion) {
     const mcVersion = modpack.minecraft_version || modpack.version;
     const javaMainVersion = parseInt(javaVersion);
-
+    const modloader = modpack.modloader.toLowerCase();
     let args = [`-Xmx${modpack.memory}`, "-Xms1G"];
 
     // Базовые аргументы GC
@@ -250,14 +281,47 @@ class MinecraftLauncher {
       "-XX:G1HeapRegionSize=32M"
     );
 
-    // КРИТИЧЕСКИ ВАЖНО: отключаем модульную систему для Forge
+    // Аргументы для совместимости с Java 9+ и Forge
+    // Аргументы для совместимости с Java 9+ и Forge
     if (javaMainVersion >= 9) {
-      args.push(
-        // Полностью отключаем модульную систему
-        "--module-path=",
-        "--add-modules=java.base",
-        "-Djdk.module.main.class=cpw.mods.bootstraplauncher.BootstrapLauncher"
-      );
+      const modloader = modpack.modloader.toLowerCase();
+
+      if (modloader === "forge" || modloader === "neoforge") {
+        // Для Forge КРИТИЧЕСКИ ВАЖНЫЕ opens
+        args.push(
+          // ГЛАВНОЕ: открываем java.lang.invoke для Forge
+          "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+
+          // Остальные необходимые пакеты
+          "--add-opens=java.base/java.net=ALL-UNNAMED",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.text=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.fs=ALL-UNNAMED",
+          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+          "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+
+          // Desktop модули для GUI
+          "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
+          "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED",
+          "--add-opens=java.desktop/com.sun.imageio.plugins.png=ALL-UNNAMED",
+          "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
+          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
+          "--add-opens=java.desktop/sun.java2d=ALL-UNNAMED",
+          "--add-opens=java.desktop/sun.java2d.opengl=ALL-UNNAMED",
+          "--add-opens=java.desktop/com.sun.imageio.spi=ALL-UNNAMED",
+
+          // Logging модули
+          "--add-opens=java.logging/java.util.logging=ALL-UNNAMED"
+        );
+      }
     }
 
     // Системные свойства для Forge
@@ -278,8 +342,60 @@ class MinecraftLauncher {
         "-Dsun.stderr.encoding=UTF-8"
       );
     }
-
+    if (
+      javaMainVersion >= 17 &&
+      (modpack.modloader.toLowerCase() === "forge" ||
+        modpack.modloader.toLowerCase() === "neoforge")
+    ) {
+      args.push(
+        // Отключаем строгие проверки модулей
+        "-Djdk.module.main=false",
+        "-Djava.system.class.loader=net.minecraftforge.fml.loading.ModuleClassLoader"
+      );
+    }
     return args;
+  }
+
+  /**
+   * Определяет главный класс для запуска в зависимости от модлоадера
+   */
+  getMainClass(modpack, versionInfo) {
+    const modloader = modpack.modloader.toLowerCase();
+
+    // Если в версии есть информация о главном классе, используем её
+    if (versionInfo.mainClass) {
+      console.log(
+        `Используем главный класс из версии: ${versionInfo.mainClass}`
+      );
+      return versionInfo.mainClass;
+    }
+
+    // Определяем по модлоадеру
+    switch (modloader) {
+      case "forge":
+        const mcVersion = modpack.minecraft_version || modpack.version;
+        if (mcVersion >= "1.17") {
+          return "cpw.mods.bootstraplauncher.BootstrapLauncher";
+        } else if (mcVersion >= "1.13") {
+          return "net.minecraftforge.fml.loading.FMLClientLaunchProvider";
+        } else {
+          // Для старых версий используем LaunchWrapper
+          return "net.minecraft.launchwrapper.Launch";
+        }
+
+      case "neoforge":
+        return "cpw.mods.bootstraplauncher.BootstrapLauncher";
+
+      case "fabric":
+        return "net.fabricmc.loader.impl.launch.knot.KnotClient";
+
+      case "quilt":
+        return "org.quiltmc.loader.impl.launch.knot.KnotClient";
+
+      default:
+        // Ванильный Minecraft
+        return "net.minecraft.client.main.Main";
+    }
   }
 
   /**
@@ -912,7 +1028,7 @@ class MinecraftLauncher {
     jvmArgs.push(mainClass);
 
     // Аргументы игры
-    const gameArgs = [
+    let gameArgs = [
       "--username",
       username,
       "--version",
@@ -932,6 +1048,15 @@ class MinecraftLauncher {
       "--versionType",
       "release",
     ];
+
+    // Для старых версий Forge добавляем твикер
+    const mcVersion = modpack.minecraft_version || modpack.version;
+    if (modpack.modloader.toLowerCase() === "forge" && mcVersion < "1.13") {
+      gameArgs.unshift(
+        "--tweakClass",
+        "net.minecraftforge.fml.common.launcher.FMLTweaker"
+      );
+    }
 
     const allArgs = [...jvmArgs, ...gameArgs];
 
