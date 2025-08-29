@@ -290,7 +290,6 @@ class MinecraftLauncher {
 
       // Отключаем строгую проверку модулей
       args.push(
-        "--illegal-access=permit",
         "--add-modules=java.base",
         "--add-exports=java.base/sun.security.util=ALL-UNNAMED",
         "--add-exports=java.base/sun.security.pkcs=ALL-UNNAMED",
@@ -397,14 +396,22 @@ class MinecraftLauncher {
   async createClasspathFile(instancePath, classpath) {
     const classpathFile = path.join(instancePath, "classpath.txt");
 
-    // Записываем каждый элемент classpath в отдельную строку
-    const classpathContent = classpath.split(path.delimiter).join("\n");
+    // ИСПРАВЛЕНИЕ: правильное разделение и экранирование путей
+    const classpathEntries = classpath.split(path.delimiter);
+
+    // Экранируем пути с пробелами для Windows
+    const escapedEntries = classpathEntries.map((entry) => {
+      if (os.platform() === "win32" && entry.includes(" ")) {
+        return `"${entry}"`;
+      }
+      return entry;
+    });
+
+    const classpathContent = escapedEntries.join("\n");
     await fs.writeFile(classpathFile, classpathContent, "utf8");
 
     console.log(`Создан файл classpath: ${classpathFile}`);
-    console.log(
-      `Элементов в classpath: ${classpath.split(path.delimiter).length}`
-    );
+    console.log(`Элементов в classpath: ${classpathEntries.length}`);
 
     return classpathFile;
   }
@@ -1112,7 +1119,8 @@ class MinecraftLauncher {
       instancePath,
       javaPath,
       jvmArgsWithClasspath,
-      gameArgs
+      gameArgs,
+      modpack // Добавляем modpack как параметр
     );
 
     const minecraft = spawn(javaPath, allArgs, {
@@ -1160,7 +1168,10 @@ class MinecraftLauncher {
 
     let args = [`-Xmx${modpack.memory}`, "-Xms1G"];
 
-    // Базовые аргументы GC (сокращенные)
+    // ИСПРАВЛЕНИЕ: UnlockExperimentalVMOptions должен быть ПЕРВЫМ
+    args.push("-XX:+UnlockExperimentalVMOptions");
+
+    // Теперь можно добавлять экспериментальные опции
     args.push(
       "-XX:+UseG1GC",
       "-XX:G1NewSizePercent=20",
@@ -1170,7 +1181,6 @@ class MinecraftLauncher {
     // Для Java 9+ только критические флаги
     if (javaMainVersion >= 9) {
       args.push(
-        "--illegal-access=permit",
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED"
@@ -1297,7 +1307,7 @@ class MinecraftLauncher {
     return { jarPath, jsonPath, versionInfo };
   }
 
-  async createLaunchScript(instancePath, javaPath, jvmArgs, gameArgs) {
+  async createLaunchScript(instancePath, javaPath, jvmArgs, gameArgs, modpack) {
     const platform = os.platform();
     let scriptPath, scriptContent;
 
@@ -1447,7 +1457,7 @@ class MinecraftLauncher {
     return criticalLibs;
   }
 
-  async launchViaScript(instancePath, javaPath, jvmArgs, gameArgs) {
+  async launchViaScript(instancePath, javaPath, jvmArgs, gameArgs, modpack) {
     const platform = os.platform();
 
     if (platform === "win32") {
@@ -1455,7 +1465,8 @@ class MinecraftLauncher {
         instancePath,
         javaPath,
         jvmArgs,
-        gameArgs
+        gameArgs,
+        modpack // Добавляем modpack
       );
 
       console.log("Запускаем через BAT скрипт...");
@@ -1470,8 +1481,9 @@ class MinecraftLauncher {
       const scriptPath = await this.createLaunchScript(
         instancePath,
         javaPath,
-        jvmArgs,
-        gameArgs
+        jvmArgsWithClasspath,
+        gameArgs,
+        modpack // Добавляем modpack как параметр
       );
 
       console.log("Запускаем через shell скрипт...");
