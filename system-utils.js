@@ -292,27 +292,31 @@ read -p "Press Enter to exit..."
    */
   static async validateModpackIntegrity(instancePath) {
     const requiredFiles = ["mods", "config", "versions"];
-
     const issues = [];
 
     for (const file of requiredFiles) {
       const filePath = path.join(instancePath, file);
-
       if (!(await fs.pathExists(filePath))) {
         issues.push(`Отсутствует: ${file}`);
       }
     }
 
     // Проверяем наличие файлов версии
-    // Проверяем наличие файлов версии
     const versionsPath = path.join(instancePath, "versions");
     if (await fs.pathExists(versionsPath)) {
       const versionDirs = await fs.readdir(versionsPath);
 
-      if (versionDirs.length === 0) {
-        issues.push("Папка versions пуста");
+      // Ищем только директории, которые выглядят как версии (игнорируем папку natives)
+      const validVersionDirs = versionDirs.filter(
+        (dir) =>
+          !dir.toLowerCase().includes("natives") &&
+          fs.statSync(path.join(versionsPath, dir)).isDirectory()
+      );
+
+      if (validVersionDirs.length === 0) {
+        issues.push("Не найдено валидных версий в папке versions");
       } else {
-        for (const versionDir of versionDirs) {
+        for (const versionDir of validVersionDirs) {
           const versionPath = path.join(versionsPath, versionDir);
           const jarPath = path.join(versionPath, `${versionDir}.jar`);
           const jsonPath = path.join(versionPath, `${versionDir}.json`);
@@ -321,12 +325,9 @@ read -p "Press Enter to exit..."
           if (!(await fs.pathExists(jarPath))) {
             issues.push(`Отсутствует JAR файл: ${versionDir}.jar`);
           }
-
           if (!(await fs.pathExists(jsonPath))) {
             issues.push(`Отсутствует JSON файл: ${versionDir}.json`);
           }
-
-          // ✅ новая проверка
           if (!(await fs.pathExists(nativesPath))) {
             issues.push(`Отсутствует папка natives в ${versionDir}`);
           }
