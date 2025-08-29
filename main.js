@@ -267,10 +267,14 @@ class MinecraftLauncher {
    * Получает JVM аргументы для конкретной версии Minecraft и Java
    */
   getJVMArgs(modpack, javaVersion) {
-    const mcVersion = modpack.minecraft_version || modpack.version;
+    const mcVersion = parseFloat(modpack.minecraft_version || modpack.version);
     const javaMainVersion = parseInt(javaVersion);
     const modloader = modpack.modloader.toLowerCase();
     let args = [`-Xmx${modpack.memory}`, "-Xms1G"];
+
+    console.log(
+      `Настраиваем JVM для MC ${mcVersion} на Java ${javaMainVersion}`
+    );
 
     // Базовые аргументы GC
     args.push(
@@ -282,83 +286,91 @@ class MinecraftLauncher {
       "-XX:G1HeapRegionSize=32M"
     );
 
-    // КРИТИЧНО: Для Java 9+ отключаем модульную систему для совместимости с Mixin
-    if (javaMainVersion >= 9) {
+    // КРИТИЧНО: Для Java 17+ полностью отключаем модульную систему
+    if (javaMainVersion >= 17) {
       console.log(
-        `Java ${javaMainVersion} обнаружена, добавляем флаги совместимости модулей`
+        `Java ${javaMainVersion} обнаружена, настраиваем флаги для MC ${mcVersion}`
       );
 
-      // Отключаем строгую проверку модулей
+      // Базовые флаги для работы с модульной системой
       args.push(
-        "--illegal-access=permit",
-        "--add-modules=java.base",
-        "--add-exports=java.base/sun.security.util=ALL-UNNAMED",
-        "--add-exports=java.base/sun.security.pkcs=ALL-UNNAMED",
-        "--add-exports=java.base/sun.security.x509=ALL-UNNAMED"
+        // Основные флаги для отключения модулей
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.text=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+
+        // Открываем внутренние пакеты для ASM и Mixin
+        "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.reflect=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.math=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.module=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.util.jar=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED"
       );
 
-      // Для Forge/NeoForge добавляем специальные opens
+      // КРИТИЧНОЕ РЕШЕНИЕ ПРОБЛЕМЫ ASM: Вместо экспорта внутренних ASM классов,
+      // полностью отключаем использование Nashorn engine который конфликтует
+      args.push(
+        // Отключаем Nashorn который вызывает конфликты ASM
+        "-Djdk.nashorn.args=--no-deprecation-warning",
+        "-Dpolyglot.js.nashorn-compat=true",
+        "-Dpolyglot.js.ecmascript-version=2022",
+
+        // Разрешаем все модули
+        "--add-modules=ALL-SYSTEM",
+        "--add-modules=jdk.unsupported", // Для sun.misc классов
+        "--add-modules=jdk.management" // Для JMX
+      );
+
+      // Специфичные флаги для Forge/NeoForge
       if (modloader === "forge" || modloader === "neoforge") {
-        console.log(
-          `Модлоадер ${modloader} обнаружен, добавляем Forge-специфичные флаги`
-        );
+        console.log("Добавляем дополнительные флаги для Forge/NeoForge");
 
         args.push(
-          // Базовые opens для Mixin
-          "--add-opens=java.base/java.lang=ALL-UNNAMED",
-          "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-          "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-          "--add-opens=java.base/java.util=ALL-UNNAMED",
-          "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
-          "--add-opens=java.base/java.io=ALL-UNNAMED",
-          "--add-opens=java.base/java.net=ALL-UNNAMED",
-          "--add-opens=java.base/java.nio=ALL-UNNAMED",
-          "--add-opens=java.base/java.security=ALL-UNNAMED",
-          "--add-opens=java.base/java.text=ALL-UNNAMED",
-          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-
-          // Opens для NIO и сети
+          // Дополнительные opens для Forge
           "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
           "--add-opens=java.base/sun.nio.fs=ALL-UNNAMED",
           "--add-opens=java.base/sun.net.dns=ALL-UNNAMED",
+          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+          "--add-opens=java.base/sun.security.provider=ALL-UNNAMED",
 
-          // Opens для AWT (для некоторых модов с GUI)
+          // Для GUI и AWT
           "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
           "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
           "--add-opens=java.desktop/com.sun.imageio.plugins.png=ALL-UNNAMED",
 
-          // Opens для безопасности и криптографии
-          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
-          "--add-opens=java.base/sun.security.provider=ALL-UNNAMED",
+          // Для работы с сетью
+          "--add-opens=jdk.naming.dns/com.sun.jndi.dns=ALL-UNNAMED",
 
-          // Специфичные для Forge/Mixin
-          "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
-          "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
-          "--add-opens=java.base/jdk.internal.reflect=ALL-UNNAMED",
-          "--add-opens=java.base/jdk.internal.math=ALL-UNNAMED",
-          "--add-opens=java.base/jdk.internal.module=ALL-UNNAMED",
-          "--add-opens=java.base/jdk.internal.util.jar=ALL-UNNAMED"
-        );
+          // Специально для современных версий MC
+          "--add-opens=java.base/java.lang.module=ALL-UNNAMED",
 
-        // Для MC 1.17+ добавляем дополнительные флаги
-        if (mcVersion >= "1.17") {
-          args.push(
-            "--add-opens=java.base/java.lang.module=ALL-UNNAMED",
-            "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
-            "--add-opens=jdk.naming.dns/com.sun.jndi.dns=ALL-UNNAMED",
-            "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED"
-          );
-        }
-      }
-
-      // Для Fabric добавляем свои флаги
-      if (modloader === "fabric") {
-        args.push(
-          "--add-opens=java.base/java.lang=ALL-UNNAMED",
-          "--add-opens=java.base/java.util=ALL-UNNAMED",
-          "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
+          // Разрешаем доступ к Unsafe для производительности
+          "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+          "--add-opens=jdk.unsupported/sun.misc=ALL-UNNAMED"
         );
       }
+    } else if (javaMainVersion >= 9) {
+      // Для Java 9-16 используем более мягкий подход
+      console.log(
+        `Java ${javaMainVersion} обнаружена, добавляем флаги совместимости`
+      );
+
+      args.push(
+        "--illegal-access=permit", // Только для Java 9-16
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED"
+      );
     }
 
     // Системные свойства
@@ -392,6 +404,85 @@ class MinecraftLauncher {
 
     console.log("Сгенерированные JVM аргументы:", args);
     return args;
+  }
+
+  /**
+   * Проверяет строгую совместимость Java с модпаком
+   */
+  isStrictlyCompatible(javaVersion, modpack) {
+    const javaMainVersion = parseInt(javaVersion);
+    const mcVersion = parseFloat(modpack.minecraft_version || modpack.version);
+    const modloader = modpack.modloader.toLowerCase();
+
+    // MC 1.20+ хорошо работает с Java 17-21
+    if (mcVersion >= 1.2) {
+      return javaMainVersion >= 17 && javaMainVersion <= 21;
+    }
+
+    // MC 1.18-1.19 работает с Java 17+
+    if (mcVersion >= 1.18) {
+      return javaMainVersion >= 17;
+    }
+
+    // MC 1.17 требует Java 16+
+    if (mcVersion >= 1.17) {
+      return javaMainVersion >= 16;
+    }
+
+    // Старые версии - лучше Java 8-11
+    return javaMainVersion >= 8 && javaMainVersion <= 11;
+  }
+
+  /**
+   * Определяет рекомендуемую версию Java для модпака
+   */
+  getRecommendedJavaVersion(modpack) {
+    const mcVersion = parseFloat(modpack.minecraft_version || modpack.version);
+    const modloader = modpack.modloader.toLowerCase();
+
+    // Для MC 1.21+ рекомендуем Java 21
+    if (mcVersion >= 1.21) {
+      return {
+        recommended: 21,
+        reason: "MC 1.21+ работает оптимально на Java 21",
+        alternatives: [17],
+      };
+    }
+
+    // Для MC 1.20+ рекомендуем Java 17 или 21
+    if (mcVersion >= 1.2) {
+      return {
+        recommended: 21, // Java 21 для лучшей производительности
+        reason:
+          "MC 1.20+ поддерживает Java 21 с улучшенной производительностью",
+        alternatives: [17],
+      };
+    }
+
+    // Для MC 1.18-1.19 рекомендуем Java 17
+    if (mcVersion >= 1.18) {
+      return {
+        recommended: 17,
+        reason: "MC 1.18+ требует Java 17+",
+        alternatives: [21],
+      };
+    }
+
+    // Для MC 1.17
+    if (mcVersion >= 1.17) {
+      return {
+        recommended: 17,
+        reason: "MC 1.17 требует Java 17+",
+        alternatives: [21],
+      };
+    }
+
+    // Для старых версий
+    return {
+      recommended: 8,
+      reason: "Лучшая совместимость с модами для старых версий MC",
+      alternatives: [11, 17],
+    };
   }
 
   /**
@@ -454,27 +545,15 @@ class MinecraftLauncher {
     }
   }
   /**
-   * Находит подходящую версию Java для модпака
+   * Находит подходящую версию Java для модпака (с строгой проверкой)
    */
   async findCompatibleJava(modpack) {
     const requiredVersion = this.getRequiredJavaVersion(modpack);
+    const recommendation = this.getRecommendedJavaVersion(modpack);
+
     console.log(`Модпак ${modpack.name} требует Java ${requiredVersion}+`);
-
-    // Сначала проверяем текущую Java из config
-    const currentJava = await this.checkJavaCompatibility(
-      this.config.java_path,
-      requiredVersion
-    );
-
-    if (currentJava.available && currentJava.compatible) {
-      console.log(`Текущая Java подходит: ${currentJava.version}`);
-      return currentJava;
-    }
-
     console.log(
-      `Текущая Java не подходит (версия ${
-        currentJava.version || "unknown"
-      }), ищем альтернативы...`
+      `Рекомендуется Java ${recommendation.recommended}: ${recommendation.reason}`
     );
 
     // Ищем все доступные установки Java
@@ -486,31 +565,75 @@ class MinecraftLauncher {
       (java) =>
         java.available &&
         java.compatible &&
-        java.majorVersion >= requiredVersion
+        java.majorVersion >= requiredVersion &&
+        this.isStrictlyCompatible(java.majorVersion, modpack) // СТРОГАЯ ПРОВЕРКА
     );
 
     if (compatible.length === 0) {
-      throw new Error(
-        `Не найдена подходящая версия Java.\n` +
-          `Требуется: Java ${requiredVersion}+\n` +
-          `Найдено: ${
-            installations
-              .map((j) => `${j.name} (Java ${j.version})`)
-              .join(", ") || "нет"
-          }\n\n` +
-          `Скачайте Java ${requiredVersion}+ с https://adoptium.net/`
+      // Если нет строго совместимых, ищем хотя бы базово совместимые
+      const basicCompatible = installations.filter(
+        (java) =>
+          java.available &&
+          java.compatible &&
+          java.majorVersion >= requiredVersion
       );
+
+      if (basicCompatible.length === 0) {
+        throw new Error(
+          `Не найдена подходящая версия Java.\n` +
+            `Требуется: Java ${requiredVersion}+\n` +
+            `Найдено: ${
+              installations
+                .map((j) => `${j.name} (Java ${j.version})`)
+                .join(", ") || "нет"
+            }\n\n` +
+            `Скачайте Java 8: https://adoptium.net/temurin/releases/?version=8`
+        );
+      } else {
+        // Есть только базово совместимые версии - предупреждаем пользователя
+        const newest = basicCompatible.sort(
+          (a, b) => b.majorVersion - a.majorVersion
+        )[0];
+
+        console.error("=".repeat(60));
+        console.error("КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ!");
+        console.error(
+          `Модпак ${modpack.name} (Forge ${modpack.minecraft_version}) несовместим с Java ${newest.majorVersion}!`
+        );
+        console.error("Ожидаются ошибки запуска и крэши!");
+        console.error("НАСТОЯТЕЛЬНО рекомендуется установить Java 8!");
+        console.error("=".repeat(60));
+
+        this.config.java_path = newest.path;
+        this.saveConfig();
+        return newest;
+      }
     }
 
-    // Выбираем лучшую версию (самую новую)
+    // Сначала ищем рекомендуемую версию
+    const recommended = compatible.find(
+      (java) => java.majorVersion === recommendation.recommended
+    );
+
+    if (recommended) {
+      console.log(
+        `Найдена рекомендуемая Java ${recommendation.recommended}: ${recommended.name}`
+      );
+      this.config.java_path = recommended.path;
+      this.saveConfig();
+      return recommended;
+    }
+
+    // Если рекомендуемая не найдена, выбираем наименьшую подходящую
     const bestJava = compatible.sort(
-      (a, b) => b.majorVersion - a.majorVersion
+      (a, b) => a.majorVersion - b.majorVersion
     )[0];
 
-    console.log(`Выбрана Java: ${bestJava.name} (версия ${bestJava.version})`);
+    console.log(
+      `Используем Java: ${bestJava.name} (версия ${bestJava.version})`
+    );
     console.log(`Путь: ${bestJava.path}`);
 
-    // Обновляем конфиг для будущих запусков
     this.config.java_path = bestJava.path;
     this.saveConfig();
 
