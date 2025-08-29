@@ -396,24 +396,53 @@ class MinecraftLauncher {
   async createClasspathFile(instancePath, classpath) {
     const classpathFile = path.join(instancePath, "classpath.txt");
 
-    // ИСПРАВЛЕНИЕ: правильное разделение и экранирование путей
+    // ИСПРАВЛЕНИЕ: Используем правильный разделитель для Windows
+    const separator = os.platform() === "win32" ? ";" : ":";
     const classpathEntries = classpath.split(path.delimiter);
 
-    // Экранируем пути с пробелами для Windows
-    const escapedEntries = classpathEntries.map((entry) => {
-      if (os.platform() === "win32" && entry.includes(" ")) {
-        return `"${entry}"`;
+    // Проверяем все пути и экранируем только при необходимости
+    const validEntries = [];
+    for (const entry of classpathEntries) {
+      if (await fs.pathExists(entry)) {
+        // Для Windows НЕ экранируем кавычками в файле
+        validEntries.push(entry);
+      } else {
+        console.warn(`Путь не существует: ${entry}`);
       }
-      return entry;
-    });
+    }
 
-    const classpathContent = escapedEntries.join("\n");
+    // Записываем пути через правильный разделитель В ОДНУ СТРОКУ
+    const classpathContent = validEntries.join(separator);
     await fs.writeFile(classpathFile, classpathContent, "utf8");
 
     console.log(`Создан файл classpath: ${classpathFile}`);
-    console.log(`Элементов в classpath: ${classpathEntries.length}`);
+    console.log(
+      `Валидных элементов: ${validEntries.length}/${classpathEntries.length}`
+    );
 
     return classpathFile;
+  }
+
+  async validateClasspathFile(classpathFile) {
+    try {
+      const content = await fs.readFile(classpathFile, "utf8");
+      console.log("Содержимое classpath файла:");
+      console.log(`Длина: ${content.length} символов`);
+
+      // Проверяем первые и последние 100 символов
+      console.log(`Начало: ${content.substring(0, 100)}...`);
+      console.log(`Конец: ...${content.substring(content.length - 100)}`);
+
+      // Проверяем что нет переносов строк где не должно быть
+      if (content.includes("\n") || content.includes("\r")) {
+        console.warn("ВНИМАНИЕ: Classpath содержит переносы строк!");
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Ошибка проверки classpath файла:", error);
+      return false;
+    }
   }
 
   /**
@@ -1080,15 +1109,18 @@ class MinecraftLauncher {
       classpath
     );
 
+    await this.validateClasspathFile(classpathFile);
+
     // Используем @файл синтаксис для classpath
+    // ИСПРАВЛЕНИЕ: Правильная передача classpath
     const jvmArgsWithClasspath = [
       ...jvmArgs,
       `-Djava.library.path=${nativesPath}`,
       `-Dminecraft.client.jar=${jarPath}`,
       `-Dminecraft.launcher.brand=azurael_launcher`,
       `-Dminecraft.launcher.version=1.0.0`,
-      "-cp",
-      `@${classpathFile}`, // Используем @ синтаксис для чтения из файла
+      "-classpath",
+      `@${classpathFile}`, // @ синтаксис работает только с -classpath, не с -cp
     ];
 
     // Добавляем главный класс
@@ -1105,7 +1137,7 @@ class MinecraftLauncher {
       uuid,
       accessToken
     );
-
+    this.debugArgs(jvmArgsWithClasspath, gameArgs);
     const allArgs = [...jvmArgsWithClasspath, ...gameArgs];
 
     console.log("=== ОПТИМИЗИРОВАННАЯ КОМАНДА ЗАПУСКА ===");
@@ -1166,9 +1198,15 @@ class MinecraftLauncher {
     const javaMainVersion = parseInt(javaVersion);
     const modloader = modpack.modloader.toLowerCase();
 
+    // ИСПРАВЛЕНИЕ: Убираем опасные аргументы
     let args = [`-Xmx${modpack.memory}`, "-Xms1G"];
 
-    // ИСПРАВЛЕНИЕ: UnlockExperimentalVMOptions должен быть ПЕРВЫМ
+    // КРИТИЧНО: Проверяем что memory корректный
+    console.log(`Memory настройка: ${modpack.memory}`);
+
+    // Убираем проблемный аргument который может содержать "Unlimited"
+    // НЕ добавляем: "-XX:MaxDirectMemorySize=Unlimited" - это может быть проблемой!
+
     args.push("-XX:+UnlockExperimentalVMOptions");
 
     // Теперь можно добавлять экспериментальные опции
@@ -1314,30 +1352,59 @@ class MinecraftLauncher {
     if (platform === "win32") {
       scriptPath = path.join(instancePath, "launch_game.bat");
 
-      // Экранируем пути с пробелами
+      // ИСПРАВЛЕНИЕ: Правильное экранирование для Windows BAT
       const escapedJavaPath = `"${javaPath}"`;
-      const escapedArgs = [...jvmArgs, ...gameArgs]
-        .map((arg) => (arg.includes(" ") ? `"${arg}"` : arg))
+
+      // Экранируем каждый аргумент отдельно
+      const escapedJvmArgs = jvmArgs
+        .map((arg) => {
+          // Если аргумент содержит пробелы или специальные символы
+          if (
+            arg.includes(" ") ||
+            arg.includes("&") ||
+            arg.includes("|") ||
+            arg.includes("<") ||
+            arg.includes(">")
+          ) {
+            return `"${arg}"`;
+          }
+          return arg;
+        })
+        .join(" ");
+
+      const escapedGameArgs = gameArgs
+        .map((arg) => {
+          if (
+            arg.includes(" ") ||
+            arg.includes("&") ||
+            arg.includes("|") ||
+            arg.includes("<") ||
+            arg.includes(">")
+          ) {
+            return `"${arg}"`;
+          }
+          return arg;
+        })
         .join(" ");
 
       scriptContent = `@echo off
-  chcp 65001 > nul
-  title Azurael Launcher - ${modpack.name}
-  echo Starting ${modpack.name}...
-  echo Java: ${javaPath}
-  echo Instance: ${instancePath}
-  echo.
-  
-  ${escapedJavaPath} ${escapedArgs}
-  
-  echo.
-  if %ERRORLEVEL% neq 0 (
-      echo Game crashed with error code %ERRORLEVEL%
-      pause
-  ) else (
-      echo Game closed normally.
-  )
-  `;
+    chcp 65001 > nul
+    title Azurael Launcher - ${modpack.name}
+    echo Starting ${modpack.name}...
+    echo Java: ${javaPath}
+    echo Instance: ${instancePath}
+    echo.
+    
+    ${escapedJavaPath} ${escapedJvmArgs} ${escapedGameArgs}
+    
+    echo.
+    if %ERRORLEVEL% neq 0 (
+        echo Game crashed with error code %ERRORLEVEL%
+        pause
+    ) else (
+        echo Game closed normally.
+    )
+    `;
     } else {
       scriptPath = path.join(instancePath, "launch_game.sh");
 
@@ -1366,6 +1433,28 @@ class MinecraftLauncher {
     console.log(`Создан скрипт запуска: ${scriptPath}`);
 
     return scriptPath;
+  }
+
+  debugArgs(jvmArgs, gameArgs) {
+    console.log("=== ОТЛАДКА АРГУМЕНТОВ ===");
+    console.log("JVM аргументы:");
+    jvmArgs.forEach((arg, i) => {
+      console.log(`  ${i}: "${arg}"`);
+      if (arg.toLowerCase().includes("unlimited")) {
+        console.error(`ПРОБЛЕМА: Аргумент ${i} содержит "unlimited": ${arg}`);
+      }
+    });
+
+    console.log("Game аргументы:");
+    gameArgs.forEach((arg, i) => {
+      console.log(`  ${i}: "${arg}"`);
+      if (arg.toLowerCase().includes("unlimited")) {
+        console.error(
+          `ПРОБЛЕМА: Game аргумент ${i} содержит "unlimited": ${arg}`
+        );
+      }
+    });
+    console.log("========================");
   }
 
   async buildClasspath(instancePath, versionInfo, mainJarPath) {
