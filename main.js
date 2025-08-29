@@ -1322,32 +1322,6 @@ class MinecraftLauncher {
       console.log(`Добавлено из JSON: ${jsonLibsAdded} библиотек`);
     }
 
-    // Проверяем и добавляем моды
-    const modsDir = path.join(instancePath, "mods");
-    if (await fs.pathExists(modsDir)) {
-      console.log("Сканируем папку mods...");
-      const modJars = await this.findJarFiles(modsDir);
-
-      // Для модов тоже сортируем по важности
-      const coreLibs = modJars.filter((jar) => {
-        const name = path.basename(jar).toLowerCase();
-        return (
-          name.includes("core") || name.includes("lib") || name.includes("api")
-        );
-      });
-
-      const regularMods = modJars.filter((jar) => !coreLibs.includes(jar));
-
-      classpath.push(...coreLibs);
-      classpath.push(...regularMods);
-
-      console.log(
-        `Найдено модов: ${modJars.length} (${coreLibs.length} основных)`
-      );
-    } else {
-      console.warn("Папка mods не найдена!");
-    }
-
     console.log(`Итого в classpath: ${classpath.length} элементов`);
 
     // Критическая проверка наличия Mixin
