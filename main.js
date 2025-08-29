@@ -6,6 +6,7 @@ const { spawn } = require("child_process");
 const https = require("https");
 const yauzl = require("yauzl");
 const os = require("os");
+const SystemUtils = require("./system-utils");
 
 class MinecraftLauncher {
   constructor() {
@@ -281,34 +282,97 @@ class MinecraftLauncher {
       "-XX:G1HeapRegionSize=32M"
     );
 
-    // Для Java 17+ с Forge используем специальные флаги
+    // КРИТИЧНО: Для Java 9+ отключаем модульную систему для совместимости с Mixin
     if (javaMainVersion >= 9) {
-      const modloader = modpack.modloader.toLowerCase();
+      console.log(
+        `Java ${javaMainVersion} обнаружена, добавляем флаги совместимости модулей`
+      );
 
+      // Отключаем строгую проверку модулей
+      args.push(
+        "--illegal-access=permit",
+        "--add-modules=java.base",
+        "--add-exports=java.base/sun.security.util=ALL-UNNAMED",
+        "--add-exports=java.base/sun.security.pkcs=ALL-UNNAMED",
+        "--add-exports=java.base/sun.security.x509=ALL-UNNAMED"
+      );
+
+      // Для Forge/NeoForge добавляем специальные opens
       if (modloader === "forge" || modloader === "neoforge") {
-        // Критичные opens для работы Mixin и Forge
+        console.log(
+          `Модлоадер ${modloader} обнаружен, добавляем Forge-специфичные флаги`
+        );
+
         args.push(
-          "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+          // Базовые opens для Mixin
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
           "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
           "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
           "--add-opens=java.base/java.io=ALL-UNNAMED",
-          "--add-opens=java.base/java.util=ALL-UNNAMED",
-          "--add-opens=java.base/java.lang=ALL-UNNAMED",
           "--add-opens=java.base/java.net=ALL-UNNAMED",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.security=ALL-UNNAMED",
+          "--add-opens=java.base/java.text=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+
+          // Opens для NIO и сети
           "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.awt=ALL-UNNAMED"
+          "--add-opens=java.base/sun.nio.fs=ALL-UNNAMED",
+          "--add-opens=java.base/sun.net.dns=ALL-UNNAMED",
+
+          // Opens для AWT (для некоторых модов с GUI)
+          "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
+          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
+          "--add-opens=java.desktop/com.sun.imageio.plugins.png=ALL-UNNAMED",
+
+          // Opens для безопасности и криптографии
+          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+          "--add-opens=java.base/sun.security.provider=ALL-UNNAMED",
+
+          // Специфичные для Forge/Mixin
+          "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
+          "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
+          "--add-opens=java.base/jdk.internal.reflect=ALL-UNNAMED",
+          "--add-opens=java.base/jdk.internal.math=ALL-UNNAMED",
+          "--add-opens=java.base/jdk.internal.module=ALL-UNNAMED",
+          "--add-opens=java.base/jdk.internal.util.jar=ALL-UNNAMED"
+        );
+
+        // Для MC 1.17+ добавляем дополнительные флаги
+        if (mcVersion >= "1.17") {
+          args.push(
+            "--add-opens=java.base/java.lang.module=ALL-UNNAMED",
+            "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
+            "--add-opens=jdk.naming.dns/com.sun.jndi.dns=ALL-UNNAMED",
+            "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED"
+          );
+        }
+      }
+
+      // Для Fabric добавляем свои флаги
+      if (modloader === "fabric") {
+        args.push(
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
         );
       }
     }
 
-    // Системные свойства для Forge
+    // Системные свойства
     args.push(
-      "-Dminecraft.launcher.brand=azurael_launcher",
+      `-Dminecraft.launcher.brand=${this.config.launcher_name.replace(
+        /\s/g,
+        "_"
+      )}`,
       "-Dminecraft.launcher.version=1.0.0",
       "-Dfml.ignoreInvalidMinecraftCertificates=true",
       "-Dfml.ignorePatchDiscrepancies=true",
       "-Dfml.earlyprogresswindow=false",
-      "-Dlog4j2.formatMsgNoLookups=true"
+      "-Dlog4j2.formatMsgNoLookups=true",
+      "-Dlog4j.configurationFile=log4j2.xml"
     );
 
     // Для Windows добавляем кодировку консоли
@@ -316,9 +380,17 @@ class MinecraftLauncher {
       args.push(
         "-Dfile.encoding=UTF-8",
         "-Dsun.stdout.encoding=UTF-8",
-        "-Dsun.stderr.encoding=UTF-8"
+        "-Dsun.stderr.encoding=UTF-8",
+        "-Dconsole.encoding=UTF-8"
       );
     }
+
+    // Дополнительные аргументы из конфига
+    if (this.config.settings.java_args) {
+      args.push(...this.config.settings.java_args);
+    }
+
+    console.log("Сгенерированные JVM аргументы:", args);
     return args;
   }
 
@@ -327,43 +399,60 @@ class MinecraftLauncher {
    */
   getMainClass(modpack, versionInfo) {
     const modloader = modpack.modloader.toLowerCase();
+    const mcVersion = modpack.minecraft_version || modpack.version;
+
+    console.log(`Определяем главный класс для ${modloader} MC ${mcVersion}`);
 
     // Если в версии есть информация о главном классе, используем её
-    if (versionInfo.mainClass) {
+    if (versionInfo && versionInfo.mainClass) {
       console.log(
         `Используем главный класс из версии: ${versionInfo.mainClass}`
       );
       return versionInfo.mainClass;
     }
 
-    // Определяем по модлоадеру
+    // Определяем по модлоадеру и версии MC
     switch (modloader) {
       case "forge":
-        const mcVersion = modpack.minecraft_version || modpack.version;
         if (mcVersion >= "1.17") {
+          // Современный Forge использует BootstrapLauncher
+          console.log("Используем BootstrapLauncher для современного Forge");
           return "cpw.mods.bootstraplauncher.BootstrapLauncher";
         } else if (mcVersion >= "1.13") {
+          // Forge 1.13-1.16
+          console.log("Используем FMLClientLaunchProvider для Forge 1.13-1.16");
           return "net.minecraftforge.fml.loading.FMLClientLaunchProvider";
         } else {
-          // Для старых версий используем LaunchWrapper
+          // Старый Forge с LaunchWrapper
+          console.log("Используем LaunchWrapper для старого Forge");
           return "net.minecraft.launchwrapper.Launch";
         }
 
       case "neoforge":
+        console.log("Используем BootstrapLauncher для NeoForge");
         return "cpw.mods.bootstraplauncher.BootstrapLauncher";
 
       case "fabric":
+        console.log("Используем KnotClient для Fabric");
         return "net.fabricmc.loader.impl.launch.knot.KnotClient";
 
       case "quilt":
+        console.log("Используем KnotClient для Quilt");
         return "org.quiltmc.loader.impl.launch.knot.KnotClient";
 
+      case "vanilla":
       default:
         // Ванильный Minecraft
-        return "net.minecraft.client.main.Main";
+        console.log("Используем стандартный Main для ванильного Minecraft");
+        if (mcVersion >= "1.17") {
+          return "net.minecraft.client.main.Main";
+        } else if (mcVersion >= "1.6") {
+          return "net.minecraft.client.main.Main";
+        } else {
+          return "net.minecraft.client.Minecraft";
+        }
     }
   }
-
   /**
    * Находит подходящую версию Java для модпака
    */
@@ -892,48 +981,92 @@ class MinecraftLauncher {
   async launchMinecraft(username, modpack) {
     const instancePath = path.join(this.instancesDir, modpack.id);
 
+    console.log(`=== Запуск Minecraft ===`);
+    console.log(`Пользователь: ${username}`);
+    console.log(`Модпак: ${modpack.name} (${modpack.id})`);
+    console.log(`Версия MC: ${modpack.minecraft_version || modpack.version}`);
+    console.log(`Модлоадер: ${modpack.modloader} ${modpack.forge_version}`);
+    console.log(`Путь экземпляра: ${instancePath}`);
+
     // Проверяем что модпак установлен
     if (!fs.existsSync(instancePath)) {
       throw new Error("Модпак не установлен");
     }
 
+    // Проверяем целостность модпака
+    console.log("Проверяем целостность модпака...");
+    const integrity = await SystemUtils.validateModpackIntegrity(instancePath);
+    if (!integrity.valid) {
+      console.error("Проблемы с модпаком:", integrity.issues);
+      throw new Error(`Модпак поврежден: ${integrity.issues.join(", ")}`);
+    }
+
     // Находим подходящую версию Java
-    console.log("Проверяем совместимость Java...");
+    console.log("Ищем подходящую версию Java...");
     const javaInfo = await this.findCompatibleJava(modpack);
     const javaPath = javaInfo.path;
 
-    console.log(`Используем Java: ${javaPath} (версия ${javaInfo.version})`);
+    console.log(
+      `Используем Java: ${javaPath} (версия ${javaInfo.majorVersion})`
+    );
 
-    // Определяем версию Forge
-    const forgeVersionName = `${modpack.version}-forge-${modpack.forge_version}`;
+    // Определяем версию для запуска
+    const forgeVersionName = `${
+      modpack.minecraft_version || modpack.version
+    }-forge-${modpack.forge_version}`;
     const versionsPath = path.join(instancePath, "versions");
 
     console.log(`Ищем версию: ${forgeVersionName}`);
 
     // Проверяем структуру версий
     const forgeVersionDir = path.join(versionsPath, forgeVersionName);
-    const vanillaVersionDir = path.join(versionsPath, modpack.version);
+    const vanillaVersionDir = path.join(
+      versionsPath,
+      modpack.minecraft_version || modpack.version
+    );
 
-    let jarPath, jsonPath;
+    let jarPath, jsonPath, versionInfo;
 
-    // Определяем пути к файлам
+    // Ищем подходящие файлы версии
     if (await fs.pathExists(forgeVersionDir)) {
+      console.log("Найдена папка версии Forge");
+
       const forgeJson = path.join(forgeVersionDir, `${forgeVersionName}.json`);
       const forgeJar = path.join(forgeVersionDir, `${forgeVersionName}.jar`);
-      const vanillaJar = path.join(vanillaVersionDir, `${modpack.version}.jar`);
 
       if (await fs.pathExists(forgeJson)) {
         jsonPath = forgeJson;
+        console.log(`Используем JSON: ${forgeJson}`);
       }
 
       if (await fs.pathExists(forgeJar)) {
         jarPath = forgeJar;
-      } else if (await fs.pathExists(vanillaJar)) {
-        jarPath = vanillaJar;
+        console.log(`Используем JAR: ${forgeJar}`);
       }
-    } else if (await fs.pathExists(vanillaVersionDir)) {
-      jarPath = path.join(vanillaVersionDir, `${modpack.version}.jar`);
-      jsonPath = path.join(vanillaVersionDir, `${modpack.version}.json`);
+    }
+
+    // Если не найдены файлы Forge, ищем ванильную версию
+    if (!jarPath && (await fs.pathExists(vanillaVersionDir))) {
+      console.log("Используем файлы ванильной версии");
+
+      const vanillaJar = path.join(
+        vanillaVersionDir,
+        `${modpack.minecraft_version || modpack.version}.jar`
+      );
+      const vanillaJson = path.join(
+        vanillaVersionDir,
+        `${modpack.minecraft_version || modpack.version}.json`
+      );
+
+      if (await fs.pathExists(vanillaJar)) {
+        jarPath = vanillaJar;
+        console.log(`Используем ванильный JAR: ${vanillaJar}`);
+      }
+
+      if (await fs.pathExists(vanillaJson)) {
+        jsonPath = vanillaJson;
+        console.log(`Используем ванильный JSON: ${vanillaJson}`);
+      }
     }
 
     if (!jarPath || !(await fs.pathExists(jarPath))) {
@@ -941,47 +1074,53 @@ class MinecraftLauncher {
     }
 
     // Читаем конфигурацию версии
-    let versionInfo;
     try {
       if (jsonPath && (await fs.pathExists(jsonPath))) {
         versionInfo = await fs.readJson(jsonPath);
+        console.log(`Загружена конфигурация версии: ${versionInfo.id}`);
       } else {
+        console.log("Создаем базовую конфигурацию версии");
         versionInfo = {
           id: forgeVersionName,
           type: "release",
-          mainClass: "net.minecraftforge.client.loading.ClientModLoader",
+          mainClass: null, // Будет определен автоматически
           libraries: [],
-          assetIndex: { id: modpack.version },
+          assetIndex: { id: modpack.minecraft_version || modpack.version },
         };
       }
     } catch (error) {
+      console.warn("Ошибка чтения JSON конфигурации:", error.message);
       versionInfo = {
         id: forgeVersionName,
         type: "release",
-        mainClass: "net.minecraftforge.client.loading.ClientModLoader",
+        mainClass: null,
         libraries: [],
-        assetIndex: { id: modpack.version },
+        assetIndex: { id: modpack.minecraft_version || modpack.version },
       };
     }
 
     // Создаем UUID для сессии
     const uuid = this.generateUUID();
-    const accessToken = "null";
+    const accessToken = "0";
 
     // Определяем папку для natives
     const nativesPath = path.join(instancePath, "versions", "natives");
     await fs.ensureDir(nativesPath);
 
-    // Получаем JVM аргументы с учетом версии Java и модлоадера
+    // Получаем JVM аргументы с исправленными флагами модулей
     const jvmArgs = this.getJVMArgs(modpack, javaInfo.majorVersion);
 
+    // Добавляем системные property
     jvmArgs.push(
       `-Djava.library.path=${nativesPath}`,
       `-Dminecraft.client.jar=${jarPath}`,
+      `-Dminecraft.launcher.brand=azurael_launcher`,
+      `-Dminecraft.launcher.version=1.0.0`,
       "-cp"
     );
 
     // Строим classpath
+    console.log("Строим classpath...");
     const classpath = await this.buildClasspath(
       instancePath,
       versionInfo,
@@ -989,8 +1128,9 @@ class MinecraftLauncher {
     );
     jvmArgs.push(classpath);
 
-    // Добавляем главный класс с учетом модлоадера
+    // Добавляем главный класс
     const mainClass = this.getMainClass(modpack, versionInfo);
+    console.log(`Главный класс: ${mainClass}`);
     jvmArgs.push(mainClass);
 
     // Аргументы игры
@@ -1004,7 +1144,9 @@ class MinecraftLauncher {
       "--assetsDir",
       path.join(instancePath, "assets"),
       "--assetIndex",
-      versionInfo.assetIndex?.id || modpack.version,
+      versionInfo.assetIndex?.id ||
+        modpack.minecraft_version ||
+        modpack.version,
       "--uuid",
       uuid,
       "--accessToken",
@@ -1016,8 +1158,11 @@ class MinecraftLauncher {
     ];
 
     // Для старых версий Forge добавляем твикер
-    const mcVersion = modpack.minecraft_version || modpack.version;
-    if (modpack.modloader.toLowerCase() === "forge" && mcVersion < "1.13") {
+    if (
+      modpack.modloader.toLowerCase() === "forge" &&
+      (modpack.minecraft_version || modpack.version) < "1.13"
+    ) {
+      console.log("Добавляем FML твикер для старого Forge");
       gameArgs.unshift(
         "--tweakClass",
         "net.minecraftforge.fml.common.launcher.FMLTweaker"
@@ -1026,26 +1171,74 @@ class MinecraftLauncher {
 
     const allArgs = [...jvmArgs, ...gameArgs];
 
-    console.log("Команда запуска:");
-    console.log(`"${javaPath}" ${allArgs.join(" ")}`);
+    console.log("=== КОМАНДА ЗАПУСКА ===");
+    console.log(`Java: "${javaPath}"`);
+    console.log(`Аргументы: ${allArgs.join(" ")}`);
+    console.log("========================");
+
+    // Создаем скрипт запуска для отладки
+    if (os.platform() === "win32") {
+      await SystemUtils.createWindowsLauncher(
+        instancePath,
+        javaPath,
+        jvmArgs,
+        gameArgs
+      );
+    } else {
+      await SystemUtils.createUnixLauncher(
+        instancePath,
+        javaPath,
+        jvmArgs,
+        gameArgs
+      );
+    }
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
       stdio: "pipe",
       detached: false,
+      env: {
+        ...process.env,
+        // Принудительно устанавливаем кодировку
+        LANG: "en_US.UTF-8",
+        LC_ALL: "en_US.UTF-8",
+      },
     });
 
-    // Логируем вывод процесса
+    // Улучшенное логирование вывода процесса
     minecraft.stdout.on("data", (data) => {
-      console.log(`MC stdout: ${data}`);
+      const output = data.toString("utf8");
+      console.log(`MC stdout: ${output}`);
     });
 
     minecraft.stderr.on("data", (data) => {
-      console.log(`MC stderr: ${data}`);
+      const output = data.toString("utf8");
+      console.log(`MC stderr: ${output}`);
+
+      // Проверяем на критические ошибки
+      if (output.includes("java.lang.module.FindException")) {
+        console.error("КРИТИЧЕСКАЯ ОШИБКА: Конфликт модулей Java!");
+        console.error(
+          "Рекомендация: Используйте Java 8 или добавьте больше --add-opens флагов"
+        );
+      }
+      if (output.includes("ClassNotFoundException")) {
+        console.error(
+          "ОШИБКА: Класс не найден - возможно проблема с classpath"
+        );
+      }
+      if (output.includes("NoClassDefFoundError")) {
+        console.error(
+          "ОШИБКА: Определение класса не найдено - проблема с зависимостями"
+        );
+      }
     });
 
     minecraft.on("close", (code) => {
       console.log(`Minecraft завершился с кодом ${code}`);
+      if (code !== 0) {
+        console.error(`Игра завершилась с ошибкой (код ${code})`);
+      }
     });
 
     minecraft.on("error", (error) => {
@@ -1053,27 +1246,66 @@ class MinecraftLauncher {
       throw error;
     });
 
+    // Ждем немного чтобы убедиться что процесс запустился
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
     return minecraft;
   }
 
   async buildClasspath(instancePath, versionInfo, mainJarPath) {
     const classpath = [];
 
-    // Добавляем главный jar файл
-    classpath.push(mainJarPath);
+    console.log("=== Построение Classpath ===");
 
-    // Добавляем библиотеки из папки libraries
+    // Добавляем главный jar файл первым
+    classpath.push(mainJarPath);
+    console.log(`Главный JAR: ${path.basename(mainJarPath)}`);
+
+    // Сканируем папку libraries
     const librariesPath = path.join(instancePath, "libraries");
     if (await fs.pathExists(librariesPath)) {
       console.log("Сканируем папку libraries...");
       const libraryJars = await this.findJarFiles(librariesPath);
-      classpath.push(...libraryJars);
-      console.log(`Найдено ${libraryJars.length} библиотек`);
+
+      // Сортируем библиотеки по важности
+      const criticalLibs = [];
+      const regularLibs = [];
+
+      for (const jar of libraryJars) {
+        const jarName = path.basename(jar).toLowerCase();
+
+        // Критично важные библиотеки должны быть в начале classpath
+        if (
+          jarName.includes("asm") ||
+          jarName.includes("mixin") ||
+          jarName.includes("sponge") ||
+          jarName.includes("bootstrap") ||
+          jarName.includes("forge") ||
+          jarName.includes("fml")
+        ) {
+          criticalLibs.push(jar);
+          console.log(`Критичная библиотека: ${path.basename(jar)}`);
+        } else {
+          regularLibs.push(jar);
+        }
+      }
+
+      // Добавляем критичные библиотеки первыми
+      classpath.push(...criticalLibs);
+      classpath.push(...regularLibs);
+
+      console.log(
+        `Найдено библиотек: ${libraryJars.length} (${criticalLibs.length} критичных)`
+      );
+    } else {
+      console.warn("Папка libraries не найдена!");
     }
 
     // Добавляем библиотеки из конфигурации версии
-    if (versionInfo.libraries) {
+    if (versionInfo && versionInfo.libraries) {
       console.log("Обрабатываем библиотеки из JSON конфигурации...");
+      let jsonLibsAdded = 0;
+
       for (const lib of versionInfo.libraries) {
         if (lib.downloads && lib.downloads.artifact) {
           const libPath = path.join(
@@ -1083,48 +1315,80 @@ class MinecraftLauncher {
           );
           if ((await fs.pathExists(libPath)) && !classpath.includes(libPath)) {
             classpath.push(libPath);
+            jsonLibsAdded++;
           }
         }
       }
+      console.log(`Добавлено из JSON: ${jsonLibsAdded} библиотек`);
     }
 
-    // Добавляем моды
+    // Проверяем и добавляем моды
     const modsDir = path.join(instancePath, "mods");
     if (await fs.pathExists(modsDir)) {
       console.log("Сканируем папку mods...");
       const modJars = await this.findJarFiles(modsDir);
-      classpath.push(...modJars);
-      console.log(`Найдено ${modJars.length} модов`);
+
+      // Для модов тоже сортируем по важности
+      const coreLibs = modJars.filter((jar) => {
+        const name = path.basename(jar).toLowerCase();
+        return (
+          name.includes("core") || name.includes("lib") || name.includes("api")
+        );
+      });
+
+      const regularMods = modJars.filter((jar) => !coreLibs.includes(jar));
+
+      classpath.push(...coreLibs);
+      classpath.push(...regularMods);
+
+      console.log(
+        `Найдено модов: ${modJars.length} (${coreLibs.length} основных)`
+      );
+    } else {
+      console.warn("Папка mods не найдена!");
     }
 
-    console.log(`Общий classpath содержит ${classpath.length} элементов`);
-    // КРИТИЧНО: проверяем что все необходимые библиотеки в classpath
-    console.log("Проверяем наличие Mixin в classpath...");
-    const hasMixin = classpath.some(
-      (jar) => jar.includes("mixin") || jar.includes("asm")
-    );
-    if (!hasMixin) {
-      console.warn("ВНИМАНИЕ: Mixin библиотеки не найдены в classpath!");
-    }
+    console.log(`Итого в classpath: ${classpath.length} элементов`);
 
-    // Ищем ASM библиотеки в libraries
-    const asmJars = await this.findJarFiles(
-      path.join(instancePath, "libraries")
-    );
-    const asmLibs = asmJars.filter(
-      (jar) =>
-        jar.includes("asm") ||
-        jar.includes("objectweb") ||
-        jar.includes("mixin")
-    );
-
-    console.log(`Найдено ASM/Mixin библиотек: ${asmLibs.length}`);
-    asmLibs.forEach((lib) => {
-      if (!classpath.includes(lib)) {
-        classpath.push(lib);
-        console.log(`Добавлена библиотека: ${path.basename(lib)}`);
-      }
+    // Критическая проверка наличия Mixin
+    const mixinLibs = classpath.filter((jar) => {
+      const name = path.basename(jar).toLowerCase();
+      return (
+        name.includes("mixin") ||
+        name.includes("sponge") ||
+        name.includes("asm")
+      );
     });
+
+    console.log("=== Проверка совместимости ===");
+    console.log(`Найдено Mixin/ASM библиотек: ${mixinLibs.length}`);
+
+    if (mixinLibs.length === 0) {
+      console.error("КРИТИЧЕСКАЯ ОШИБКА: Не найдены библиотеки Mixin/ASM!");
+      console.error("Это может привести к ошибке FindException при запуске.");
+    } else {
+      mixinLibs.forEach((lib) => {
+        console.log(`  - ${path.basename(lib)}`);
+      });
+    }
+
+    // Проверяем наличие Forge библиотек
+    const forgeLibs = classpath.filter((jar) => {
+      const name = path.basename(jar).toLowerCase();
+      return (
+        name.includes("forge") ||
+        name.includes("fml") ||
+        name.includes("bootstrap")
+      );
+    });
+
+    console.log(`Найдено Forge библиотек: ${forgeLibs.length}`);
+    if (forgeLibs.length === 0 && modpack.modloader.toLowerCase() === "forge") {
+      console.warn("ВНИМАНИЕ: Не найдены основные библиотеки Forge!");
+    }
+
+    console.log("============================");
+
     return classpath.join(path.delimiter);
   }
 
