@@ -3,45 +3,48 @@
   "launcher_name": "Azurael Launcher",
   "modpacks": [
     {
-      "id": "industrial_1192",
+      "id": "solo_leveling_1201",
       "name": "Solo Leveling",
-      "version": "1.20.1",
+      "version": "1.0.0",
       "modloader": "forge",
       "forge_version": "47.3.33",
-      "memory": "6G",
+      "minecraft_version": "1.20.1",
+      "memory": "8G",
       "download_url": "https://disk.yandex.ru/d/jEpatM78S82THg",
-      "description": "Solo Leveling - Reawakening",
-      "author": "Azurael Team",
-      "minecraft_version": "1.20.1"
+      "description": "Solo Leveling - Reawakening. Модпак с элементами RPG и магии.",
+      "author": "Azurael Team"
     },
     {
       "id": "neoforge_121",
-      "name": "NeoForge Pack",
-      "version": "1.21.1",
+      "name": "NeoForge Modern",
+      "version": "1.0.0",
       "modloader": "neoforge",
       "forge_version": "21.1.72",
-      "memory": "8G",
+      "minecraft_version": "1.21.1",
+      "memory": "10G",
       "download_url": "https://example.com/neoforge-pack.zip",
-      "description": "Modern NeoForge modpack for MC 1.21+",
-      "author": "Azurael Team",
-      "minecraft_version": "1.21.1"
+      "description": "Современный модпак на NeoForge с новейшими технологиями.",
+      "author": "Azurael Team"
+    },
+    {
+      "id": "fabric_121",
+      "name": "Fabric Optimized",
+      "version": "1.0.0",
+      "modloader": "fabric",
+      "forge_version": "0.16.7",
+      "minecraft_version": "1.21.1",
+      "memory": "6G",
+      "download_url": "https://example.com/fabric-pack.zip",
+      "description": "Оптимизированный Fabric модпак для производительности.",
+      "author": "Azurael Team"
     }
   ],
   "settings": {
     "auto_update": true,
     "keep_launcher_open": false,
     "show_snapshots": false,
-    "default_memory": "6G",
-    "java_args": [
-      "-XX:+UnlockExperimentalVMOptions",
-      "-XX:+UseG1GC",
-      "-XX:G1NewSizePercent=20",
-      "-XX:G1ReservePercent=20",
-      "-XX:MaxGCPauseMillis=50",
-      "-XX:G1HeapRegionSize=32M",
-      "-Dfml.earlyprogresswindow=false",
-      "-Dlog4j2.formatMsgNoLookups=true",
-      "-Dfile.encoding=UTF-8"
-    ]
+    "default_memory": "8G",
+    "java_min_version": 17,
+    "java_recommended_version": 21
   }
 }

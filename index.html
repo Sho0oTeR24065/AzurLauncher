@@ -101,20 +101,6 @@
         background: white;
       }
 
-      .modpack-list::-webkit-scrollbar {
-        width: 6px;
-      }
-
-      .modpack-list::-webkit-scrollbar-track {
-        background: #f1f1f1;
-        border-radius: 3px;
-      }
-
-      .modpack-list::-webkit-scrollbar-thumb {
-        background: #c1c1c1;
-        border-radius: 3px;
-      }
-
       .modpack-item {
         padding: 18px;
         border-bottom: 1px solid #f0f3f6;
@@ -123,7 +109,6 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        position: relative;
       }
 
       .modpack-item:last-child {
@@ -159,12 +144,6 @@
         font-size: 13px;
       }
 
-      .modpack-info .author {
-        color: #888;
-        font-size: 11px;
-        font-style: italic;
-      }
-
       .modpack-status {
         font-size: 20px;
         opacity: 0.8;
@@ -193,13 +172,6 @@
         margin-bottom: 20px;
         font-size: 16px;
         line-height: 1.6;
-      }
-
-      .selected-modpack .author {
-        color: #888;
-        font-size: 14px;
-        margin-bottom: 20px;
-        font-style: italic;
       }
 
       .selected-modpack .details {
@@ -249,17 +221,11 @@
         transition: all 0.3s ease;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        position: relative;
-        overflow: hidden;
       }
 
       .btn:hover {
         transform: translateY(-3px);
         box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
-      }
-
-      .btn:active {
-        transform: translateY(-1px);
       }
 
       .btn:disabled {
@@ -300,32 +266,6 @@
         width: 0%;
         transition: width 0.3s ease;
         border-radius: 25px;
-        position: relative;
-      }
-
-      .progress-bar::after {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: linear-gradient(
-          90deg,
-          transparent,
-          rgba(255, 255, 255, 0.3),
-          transparent
-        );
-        animation: shine 2s infinite;
-      }
-
-      @keyframes shine {
-        0% {
-          transform: translateX(-100%);
-        }
-        100% {
-          transform: translateX(100%);
-        }
       }
 
       .progress-text {
@@ -368,13 +308,49 @@
         border: 2px solid rgba(23, 162, 184, 0.3);
       }
 
+      .status.warning {
+        background: rgba(255, 193, 7, 0.2);
+        color: #ffc107;
+        border: 2px solid rgba(255, 193, 7, 0.3);
+      }
+
       .hidden {
         display: none;
       }
 
-      /* Анимации */
-      .selected-modpack {
-        animation: slideInUp 0.5s ease-out;
+      /* Java установка модал */
+      .java-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+
+      .java-modal-content {
+        background: white;
+        padding: 30px;
+        border-radius: 20px;
+        text-align: center;
+        max-width: 500px;
+        margin: 20px;
+      }
+
+      .java-modal h3 {
+        color: #667eea;
+        margin-bottom: 15px;
+        font-size: 1.5em;
+      }
+
+      .java-modal p {
+        margin-bottom: 20px;
+        color: #666;
+        line-height: 1.6;
       }
 
       @keyframes slideInUp {
@@ -388,19 +364,8 @@
         }
       }
 
-      .modpack-item {
-        animation: fadeInLeft 0.3s ease-out;
-      }
-
-      @keyframes fadeInLeft {
-        from {
-          opacity: 0;
-          transform: translateX(-20px);
-        }
-        to {
-          opacity: 1;
-          transform: translateX(0);
-        }
+      .selected-modpack {
+        animation: slideInUp 0.5s ease-out;
       }
     </style>
   </head>
@@ -417,7 +382,38 @@
             maxlength="16"
           />
         </div>
-
+        <!-- ДОБАВИТЬ после формы с никнеймом: -->
+        <div class="form-group">
+          <label for="javaPath">☕ Путь к Java (необязательно)</label>
+          <div style="display: flex; gap: 10px">
+            <input
+              type="text"
+              id="javaPath"
+              class="form-control"
+              placeholder="Автоматический поиск"
+              readonly
+              style="flex: 1"
+            />
+            <button
+              type="button"
+              class="btn btn-primary"
+              onclick="selectJavaPath()"
+              style="padding: 8px 16px; font-size: 12px; height: auto"
+            >
+              📂 Выбрать
+            </button>
+          </div>
+          <small
+            style="
+              color: #666;
+              font-size: 11px;
+              margin-top: 5px;
+              display: block;
+            "
+          >
+            Если не указан, Java будет найдена или скачана автоматически
+          </small>
+        </div>
         <div class="form-group">
           <label>📦 Выберите модпак</label>
           <div class="modpack-list" id="modpackList">
@@ -437,7 +433,6 @@
           <p class="description" id="modpackDescription">
             Выберите модпак из списка слева для просмотра деталей
           </p>
-          <p class="author" id="modpackAuthor"></p>
 
           <div class="details" id="modpackDetails" style="display: none">
             <div class="detail-item">
@@ -449,7 +444,7 @@
               <span class="value" id="modpackLoader">-</span>
             </div>
             <div class="detail-item">
-              <span class="label">Forge</span>
+              <span class="label">Версия</span>
               <span class="value" id="modpackForge">-</span>
             </div>
             <div class="detail-item">
@@ -483,7 +478,19 @@
           </div>
         </div>
 
-        <div class="status" id="status">⏳ Загрузка...</div>
+        <div class="status" id="status">⏳ Проверка системы...</div>
+      </div>
+    </div>
+
+    <!-- Java Installation Modal -->
+    <div class="java-modal hidden" id="javaModal">
+      <div class="java-modal-content">
+        <h3>☕ Установка Java</h3>
+        <p id="javaModalText">Скачивание Java 21...</p>
+        <div class="progress-container">
+          <div class="progress-bar" id="javaProgressBar"></div>
+          <div class="progress-text" id="javaProgressText">0%</div>
+        </div>
       </div>
     </div>
 
@@ -492,8 +499,110 @@
 
       let modpacks = [];
       let selectedModpack = null;
+      let javaReady = false;
 
-      // Загружаем модпаки при запуске
+      async function selectJavaPath() {
+        try {
+          const result = await ipcRenderer.invoke("select-java-path");
+          if (result.success && result.path) {
+            document.getElementById("javaPath").value = result.path;
+            updateStatus(`☕ Выбрана Java: ${result.version}`, "success");
+
+            // Сохраняем выбор
+            await ipcRenderer.invoke("save-java-path", result.path);
+            javaReady = true;
+
+            // Обновляем кнопки если выбран модпак
+            if (selectedModpack) {
+              updateSelectedModpack();
+            }
+          }
+        } catch (error) {
+          updateStatus("❌ Ошибка выбора Java: " + error.message, "error");
+        }
+      }
+
+      async function initialize() {
+        updateStatus("🔍 Проверка Java...", "info");
+
+        try {
+          // Загружаем сохраненный путь Java
+          const savedJavaPath = await ipcRenderer.invoke("get-saved-java-path");
+          if (savedJavaPath) {
+            document.getElementById("javaPath").value = savedJavaPath;
+            console.log(`Загружен сохраненный путь Java: ${savedJavaPath}`);
+          }
+
+          const javaCheck = await ipcRenderer.invoke("check-java");
+          console.log("Результат проверки Java:", javaCheck);
+
+          if (javaCheck.success) {
+            javaReady = true;
+            console.log(`✅ Java готова: ${javaCheck.java.majorVersion}`);
+            updateStatus(
+              `☕ Java ${javaCheck.java.majorVersion} готова`,
+              "success"
+            );
+            await loadModpacks();
+          } else {
+            console.log(`❌ Java не прошла проверку: ${javaCheck.error}`);
+            javaReady = false;
+            updateStatus("⚠️ Требуется установка Java", "warning");
+
+            // Показываем выбор только если Java действительно не найдена
+            const userWantsDownload = confirm(
+              `Java 17+ не найдена.\n\nОшибка: ${javaCheck.error}\n\nСкачать Java 21 автоматически?\n(Нажмите "Отмена" для ручного выбора)`
+            );
+
+            if (userWantsDownload) {
+              showJavaModal("Скачивание Java 21...");
+              try {
+                const downloadResult = await ipcRenderer.invoke(
+                  "download-java-manually"
+                );
+                if (downloadResult.success) {
+                  hideJavaModal();
+                  // Перепроверяем Java
+                  const retryCheck = await ipcRenderer.invoke("check-java");
+                  if (retryCheck.success) {
+                    javaReady = true;
+                    updateStatus(
+                      `☕ Java ${retryCheck.java.majorVersion} установлена`,
+                      "success"
+                    );
+                    await loadModpacks();
+                  }
+                } else {
+                  throw new Error(downloadResult.error);
+                }
+              } catch (error) {
+                hideJavaModal();
+                updateStatus(
+                  "❌ Ошибка скачивания Java: " + error.message,
+                  "error"
+                );
+                setTimeout(() => selectJavaPath(), 1000);
+              }
+            } else {
+              await selectJavaPath();
+            }
+          }
+        } catch (error) {
+          updateStatus("❌ Ошибка инициализации: " + error.message, "error");
+          console.error("Initialize error:", error);
+        }
+      }
+
+      function showJavaModal(text) {
+        document.getElementById("javaModalText").textContent = text;
+        document.getElementById("javaModal").classList.remove("hidden");
+      }
+
+      function hideJavaModal() {
+        document.getElementById("javaModal").classList.add("hidden");
+      }
+
+      // Загружаем модпаки
       async function loadModpacks() {
         try {
           modpacks = await ipcRenderer.invoke("get-modpacks");
@@ -515,23 +624,18 @@
           item.onclick = () => selectModpack(index);
 
           item.innerHTML = `
-                    <div class="modpack-info">
-                        <h3>${modpack.name}</h3>
-                        <p>MC ${
-                          modpack.version
-                        } • ${modpack.modloader.toUpperCase()} ${
+            <div class="modpack-info">
+              <h3>${modpack.name}</h3>
+              <p>MC ${
+                modpack.minecraft_version || modpack.version
+              } • ${modpack.modloader.toUpperCase()} ${
             modpack.forge_version
           }</p>
-                        <p class="author">by ${modpack.author || "Unknown"}</p>
-                    </div>
-                    <div class="modpack-status" id="status-${
-                      modpack.id
-                    }">⏳</div>
-                `;
+            </div>
+            <div class="modpack-status" id="status-${modpack.id}">⏳</div>
+          `;
 
           listContainer.appendChild(item);
-
-          // Проверяем статус установки
           checkModpackStatus(modpack, index);
         });
       }
@@ -546,22 +650,18 @@
           statusElement.textContent = installed ? "✅" : "📥";
           statusElement.title = installed ? "Установлен" : "Требует скачивания";
         } catch (error) {
-          console.error("Ошибка проверки статуса модпака:", error);
           document.getElementById(`status-${modpack.id}`).textContent = "❌";
         }
       }
 
       function selectModpack(index) {
-        // Убираем выделение с предыдущего элемента
         document.querySelectorAll(".modpack-item").forEach((item) => {
           item.classList.remove("selected");
         });
 
-        // Выделяем текущий элемент
         document
           .querySelectorAll(".modpack-item")
           [index].classList.add("selected");
-
         selectedModpack = modpacks[index];
         updateSelectedModpack();
       }
@@ -573,11 +673,8 @@
           selectedModpack.name;
         document.getElementById("modpackDescription").textContent =
           selectedModpack.description;
-        document.getElementById("modpackAuthor").textContent = `by ${
-          selectedModpack.author || "Unknown"
-        }`;
         document.getElementById("modpackVersion").textContent =
-          selectedModpack.version;
+          selectedModpack.minecraft_version || selectedModpack.version;
         document.getElementById("modpackLoader").textContent =
           selectedModpack.modloader.toUpperCase();
         document.getElementById("modpackForge").textContent =
@@ -586,20 +683,20 @@
           selectedModpack.memory;
         document.getElementById("modpackDetails").style.display = "grid";
 
-        // Проверяем установлен ли модпак
         try {
           const installed = await ipcRenderer.invoke(
             "check-modpack-installed",
             selectedModpack.id
           );
-
           const downloadBtn = document.getElementById("downloadBtn");
           const launchBtn = document.getElementById("launchBtn");
 
-          downloadBtn.disabled = installed;
-          launchBtn.disabled = !installed;
+          downloadBtn.disabled = installed || !javaReady;
+          launchBtn.disabled = !installed || !javaReady;
 
-          if (installed) {
+          if (!javaReady) {
+            updateStatus("⚠️ Ожидание установки Java...", "warning");
+          } else if (installed) {
             updateStatus("🎮 Модпак готов к запуску", "success");
             downloadBtn.textContent = "✅ Установлен";
           } else {
@@ -608,12 +705,11 @@
           }
         } catch (error) {
           updateStatus("❌ Ошибка проверки модпака", "error");
-          console.error("Ошибка проверки модпака:", error);
         }
       }
 
       async function downloadModpack() {
-        if (!selectedModpack) return;
+        if (!selectedModpack || !javaReady) return;
 
         const downloadBtn = document.getElementById("downloadBtn");
         const launchBtn = document.getElementById("launchBtn");
@@ -626,10 +722,9 @@
         progressContainer.classList.remove("hidden");
         updateStatus("📥 Скачивание модпака...", "info");
 
-        // Слушаем прогресс скачивания
         const progressHandler = (event, progress) => {
           progressBar.style.width = progress + "%";
-          progressText.textContent = `${progress}% - Скачивание...`;
+          progressText.textContent = `${progress}%`;
         };
 
         ipcRenderer.on("download-progress", progressHandler);
@@ -641,13 +736,10 @@
           );
 
           if (result.success) {
-            progressText.textContent = "100% - Установка завершена!";
+            progressText.textContent = "100% - Установлен!";
             updateStatus("✅ Модпак успешно установлен!", "success");
-
             downloadBtn.textContent = "✅ Установлен";
             launchBtn.disabled = false;
-
-            // Обновляем статус в списке
             document.getElementById(
               `status-${selectedModpack.id}`
             ).textContent = "✅";
@@ -655,14 +747,11 @@
             throw new Error(result.error);
           }
         } catch (error) {
-          updateStatus("❌ Ошибка скачивания: " + error.message, "error");
+          updateStatus("❌ " + error.message, "error");
           downloadBtn.disabled = false;
           downloadBtn.textContent = "📥 Попробовать снова";
-          console.error("Ошибка скачивания:", error);
         } finally {
-          // Убираем обработчик прогресса
           ipcRenderer.removeListener("download-progress", progressHandler);
-
           setTimeout(() => {
             progressContainer.classList.add("hidden");
             progressBar.style.width = "0%";
@@ -671,6 +760,11 @@
       }
 
       async function launchGame() {
+        if (!javaReady) {
+          updateStatus("⚠️ Java не готова!", "error");
+          return;
+        }
+
         const username = document.getElementById("username").value.trim();
 
         if (!username) {
@@ -693,7 +787,6 @@
         const launchBtn = document.getElementById("launchBtn");
         launchBtn.disabled = true;
         launchBtn.textContent = "🚀 Запуск...";
-
         updateStatus("🚀 Запуск игры...", "info");
 
         try {
@@ -704,10 +797,9 @@
           );
 
           if (result.success) {
-            updateStatus("🎮 Игра запущена! Приятной игры!", "success");
+            updateStatus("🎮 Игра запущена!", "success");
             launchBtn.textContent = "🎮 Запущено";
 
-            // Возвращаем кнопку в нормальное состояние через 3 секунды
             setTimeout(() => {
               launchBtn.disabled = false;
               launchBtn.textContent = "🚀 Запустить игру";
@@ -716,10 +808,9 @@
             throw new Error(result.error);
           }
         } catch (error) {
-          updateStatus("❌ Ошибка запуска: " + error.message, "error");
+          updateStatus("❌ " + error.message, "error");
           launchBtn.disabled = false;
           launchBtn.textContent = "🚀 Попробовать снова";
-          console.error("Ошибка запуска:", error);
         }
       }
 
@@ -738,14 +829,16 @@
           }
         });
 
-      // Инициализация
-      loadModpacks();
-
-      // Обработка ошибок
-      window.addEventListener("error", function (event) {
-        console.error("Глобальная ошибка:", event.error);
-        updateStatus("❌ Произошла ошибка приложения", "error");
+      // Обработчик прогресса скачивания Java
+      ipcRenderer.on("java-download-progress", (event, progress) => {
+        document.getElementById("javaProgressBar").style.width = progress + "%";
+        document.getElementById(
+          "javaProgressText"
+        ).textContent = `${progress}%`;
       });
+
+      // Инициализация
+      initialize();
     </script>
   </body>
 </html>

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "fs-extra": "^11.1.0",
+    "tar": "^6.2.1",
     "yauzl": "^2.10.0"
   },
   "build": {
