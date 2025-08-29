@@ -263,9 +263,8 @@ class MinecraftLauncher {
     }
   }
 
-  /**
-   * Получает JVM аргументы для конкретной версии Minecraft и Java
-   */
+  // Замени метод getJVMArgs в main.js этим кодом:
+
   getJVMArgs(modpack, javaVersion) {
     const mcVersion = parseFloat(modpack.minecraft_version || modpack.version);
     const javaMainVersion = parseInt(javaVersion);
@@ -275,6 +274,19 @@ class MinecraftLauncher {
     console.log(
       `Настраиваем JVM для MC ${mcVersion} на Java ${javaMainVersion}`
     );
+
+    // КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: Java 21 проблематична для Forge 1.20.1
+    if (javaMainVersion >= 21 && modloader === "forge" && mcVersion <= 1.21) {
+      console.warn("=".repeat(60));
+      console.warn(
+        "ВНИМАНИЕ: Java 21 имеет проблемы совместимости с Forge 1.20.1!"
+      );
+      console.warn("Рекомендуется использовать Java 17 или Java 8");
+      console.warn(
+        "Попытка запуска с дополнительными флагами совместимости..."
+      );
+      console.warn("=".repeat(60));
+    }
 
     // Базовые аргументы GC
     args.push(
@@ -286,55 +298,71 @@ class MinecraftLauncher {
       "-XX:G1HeapRegionSize=32M"
     );
 
-    // КРИТИЧНО: Для Java 17+ исправляем флаги совместимости
+    // ИСПРАВЛЕНИЕ: Для Java 17+ добавляем специальные флаги
     if (javaMainVersion >= 17) {
       console.log(
         `Java ${javaMainVersion} обнаружена, применяем исправленные флаги совместимости`
       );
 
-      // ГЛАВНОЕ ИСПРАВЛЕНИЕ: Открываем zipfs модуль
+      // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Отключаем модульную систему для проблемных модулей
       args.push(
-        "--add-modules=jdk.zipfs",
-        "--add-opens=jdk.zipfs/jdk.nio.zipfs=ALL-UNNAMED"
-      );
-
-      // Базовые флаги для модулей
-      args.push(
-        "--add-opens=java.base/java.lang=ALL-UNNAMED",
-        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "--add-modules=ALL-SYSTEM",
+        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens=java.base/java.io=ALL-UNNAMED",
         "--add-opens=java.base/java.net=ALL-UNNAMED",
         "--add-opens=java.base/java.nio=ALL-UNNAMED",
-        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
         "--add-opens=java.base/java.text=ALL-UNNAMED",
-        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
+        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.fs=ALL-UNNAMED",
+        "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+        "--add-opens=java.base/sun.security.x509=ALL-UNNAMED",
+        "--add-opens=java.base/sun.net.www.protocol.http=ALL-UNNAMED",
+        "--add-opens=java.base/sun.net.www.protocol.https=ALL-UNNAMED",
+        "--add-opens=java.base/sun.net.www.protocol.jar=ALL-UNNAMED"
       );
 
-      // Внутренние пакеты
+      // Дополнительные флаги для обхода модульных ограничений
       args.push(
-        "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
-        "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED",
-        "--add-opens=java.base/jdk.internal.reflect=ALL-UNNAMED",
-        "--add-opens=java.base/sun.misc=ALL-UNNAMED"
+        "--add-opens=java.naming/com.sun.jndi.ldap=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.math=ALL-UNNAMED",
+        "--add-opens=java.base/java.net.spi=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio.channels=ALL-UNNAMED",
+        "--add-opens=java.base/java.security.cert=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.regex=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.zip=ALL-UNNAMED",
+        "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
+        "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
+        "--add-opens=java.desktop/sun.awt.windows=ALL-UNNAMED",
+        "--add-opens=java.logging/java.util.logging=ALL-UNNAMED",
+        "--add-opens=java.management/sun.management=ALL-UNNAMED"
       );
 
-      // Для Forge/NeoForge добавляем дополнительные флаги
-      if (modloader === "forge" || modloader === "neoforge") {
-        args.push(
-          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.awt=ALL-UNNAMED"
-        );
-      }
+      // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Полностью исключаем проблемные модули
+      args.push(
+        // Добавляем только необходимые модули, исключаем nashorn полностью
+        "--add-modules=java.base,java.logging,java.xml,java.desktop,java.management,java.security.jgss,java.instrument,jdk.zipfs",
+        // Открываем доступ к zipfs для Forge
+        "--add-opens=jdk.zipfs/jdk.nio.zipfs=ALL-UNNAMED",
+        "--add-exports=jdk.zipfs/jdk.nio.zipfs=ALL-UNNAMED",
+        // Дополнительные экспорты для работы с ZIP файлами
+        "--add-exports=java.base/sun.nio.fs=ALL-UNNAMED",
+        "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
+        // КРИТИЧНО: Отключаем автоматическое разрешение модулей
+        "--limit-modules=java.base,java.logging,java.xml,java.desktop,java.management,java.security.jgss,java.instrument,jdk.zipfs",
+        // Отключаем модульные ограничения
+        "-Djdk.module.illegalAccess.silent=true",
+        "-Djdk.module.illegalAccess=permit"
+      );
     } else if (javaMainVersion >= 9) {
       // Для Java 9-16 используем более мягкий подход
-      console.log(
-        `Java ${javaMainVersion} обнаружена, добавляем флаги совместимости`
-      );
-
       args.push(
-        "--illegal-access=permit", // Только для Java 9-16
+        "--illegal-access=permit",
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED"
@@ -355,6 +383,22 @@ class MinecraftLauncher {
       "-Dlog4j.configurationFile=log4j2.xml"
     );
 
+    // КРИТИЧНО: Для Java 17+ добавляем блокировку nashorn и разрешаем unsafe
+    if (javaMainVersion >= 17) {
+      args.push(
+        // Отключаем nashorn полностью
+        "-Dnashorn.disabled=true",
+        "-Djdk.nashorn.disabled=true",
+        // Блокируем загрузку проблемных скриптовых движков
+        "-Djavax.script.disabled=true",
+        // КРИТИЧНО: Разрешаем доступ к Unsafe
+        "-Djdk.module.illegalAccess=permit",
+        "-Djdk.module.illegalAccess.silent=true",
+        // Отключаем строгие проверки модулей
+        "--permit-illegal-access"
+      );
+    }
+
     // Для Windows добавляем кодировку консоли
     if (os.platform() === "win32") {
       args.push(
@@ -365,13 +409,14 @@ class MinecraftLauncher {
       );
     }
 
-    // Дополнительные аргументы из конфига (но только безопасные)
+    // Дополнительные аргументы из конфига (фильтруем опасные)
     if (this.config.settings.java_args) {
       const safeArgs = this.config.settings.java_args.filter(
         (arg) =>
           !arg.includes("nashorn") &&
           !arg.includes("add-modules") &&
-          !arg.includes("limit-modules")
+          !arg.includes("limit-modules") &&
+          !arg.includes("--add-reads")
       );
       args.push(...safeArgs);
     }
@@ -379,7 +424,6 @@ class MinecraftLauncher {
     console.log("Сгенерированные JVM аргументы:", args);
     return args;
   }
-
   /**
    * Проверяет строгую совместимость Java с модпаком
    */
