@@ -281,45 +281,22 @@ class MinecraftLauncher {
       "-XX:G1HeapRegionSize=32M"
     );
 
-    // Аргументы для совместимости с Java 9+ и Forge
-    // Аргументы для совместимости с Java 9+ и Forge
+    // Для Java 17+ с Forge используем специальные флаги
     if (javaMainVersion >= 9) {
       const modloader = modpack.modloader.toLowerCase();
 
       if (modloader === "forge" || modloader === "neoforge") {
-        // Для Forge КРИТИЧЕСКИ ВАЖНЫЕ opens
+        // Критичные opens для работы Mixin и Forge
         args.push(
-          // ГЛАВНОЕ: открываем java.lang.invoke для Forge
           "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
           "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-
-          // Остальные необходимые пакеты
-          "--add-opens=java.base/java.net=ALL-UNNAMED",
-          "--add-opens=java.base/java.nio=ALL-UNNAMED",
-          "--add-opens=java.base/java.io=ALL-UNNAMED",
-          "--add-opens=java.base/java.lang=ALL-UNNAMED",
-          "--add-opens=java.base/java.text=ALL-UNNAMED",
-          "--add-opens=java.base/java.util=ALL-UNNAMED",
           "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
-          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-          "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.net=ALL-UNNAMED",
           "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-          "--add-opens=java.base/sun.nio.fs=ALL-UNNAMED",
-          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
-          "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
-
-          // Desktop модули для GUI
-          "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
-          "--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED",
-          "--add-opens=java.desktop/com.sun.imageio.plugins.png=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.java2d=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.java2d.opengl=ALL-UNNAMED",
-          "--add-opens=java.desktop/com.sun.imageio.spi=ALL-UNNAMED",
-
-          // Logging модули
-          "--add-opens=java.logging/java.util.logging=ALL-UNNAMED"
+          "--add-opens=java.desktop/sun.awt=ALL-UNNAMED"
         );
       }
     }
@@ -340,17 +317,6 @@ class MinecraftLauncher {
         "-Dfile.encoding=UTF-8",
         "-Dsun.stdout.encoding=UTF-8",
         "-Dsun.stderr.encoding=UTF-8"
-      );
-    }
-    if (
-      javaMainVersion >= 17 &&
-      (modpack.modloader.toLowerCase() === "forge" ||
-        modpack.modloader.toLowerCase() === "neoforge")
-    ) {
-      args.push(
-        // Отключаем строгие проверки модулей
-        "-Djdk.module.main=false",
-        "-Djava.system.class.loader=net.minecraftforge.fml.loading.ModuleClassLoader"
       );
     }
     return args;
@@ -1132,6 +1098,33 @@ class MinecraftLauncher {
     }
 
     console.log(`Общий classpath содержит ${classpath.length} элементов`);
+    // КРИТИЧНО: проверяем что все необходимые библиотеки в classpath
+    console.log("Проверяем наличие Mixin в classpath...");
+    const hasMixin = classpath.some(
+      (jar) => jar.includes("mixin") || jar.includes("asm")
+    );
+    if (!hasMixin) {
+      console.warn("ВНИМАНИЕ: Mixin библиотеки не найдены в classpath!");
+    }
+
+    // Ищем ASM библиотеки в libraries
+    const asmJars = await this.findJarFiles(
+      path.join(instancePath, "libraries")
+    );
+    const asmLibs = asmJars.filter(
+      (jar) =>
+        jar.includes("asm") ||
+        jar.includes("objectweb") ||
+        jar.includes("mixin")
+    );
+
+    console.log(`Найдено ASM/Mixin библиотек: ${asmLibs.length}`);
+    asmLibs.forEach((lib) => {
+      if (!classpath.includes(lib)) {
+        classpath.push(lib);
+        console.log(`Добавлена библиотека: ${path.basename(lib)}`);
+      }
+    });
     return classpath.join(path.delimiter);
   }
 
