@@ -304,6 +304,7 @@ read -p "Press Enter to exit..."
     }
 
     // Проверяем наличие файлов версии
+    // Проверяем наличие файлов версии
     const versionsPath = path.join(instancePath, "versions");
     if (await fs.pathExists(versionsPath)) {
       const versionDirs = await fs.readdir(versionsPath);
@@ -315,6 +316,7 @@ read -p "Press Enter to exit..."
           const versionPath = path.join(versionsPath, versionDir);
           const jarPath = path.join(versionPath, `${versionDir}.jar`);
           const jsonPath = path.join(versionPath, `${versionDir}.json`);
+          const nativesPath = path.join(versionPath, "natives");
 
           if (!(await fs.pathExists(jarPath))) {
             issues.push(`Отсутствует JAR файл: ${versionDir}.jar`);
@@ -322,6 +324,11 @@ read -p "Press Enter to exit..."
 
           if (!(await fs.pathExists(jsonPath))) {
             issues.push(`Отсутствует JSON файл: ${versionDir}.json`);
+          }
+
+          // ✅ новая проверка
+          if (!(await fs.pathExists(nativesPath))) {
+            issues.push(`Отсутствует папка natives в ${versionDir}`);
           }
         }
       }
