@@ -62,6 +62,266 @@ class MinecraftLauncher {
     // this.mainWindow.webContents.openDevTools();
   }
 
+  /**
+   * Проверяет версию Java и возвращает информацию о совместимости
+   */
+  async checkJavaCompatibility(javaPath, requiredVersion = 17) {
+    return new Promise((resolve) => {
+      const { exec } = require("child_process");
+
+      exec(`"${javaPath}" -version`, (error, stdout, stderr) => {
+        if (error) {
+          resolve({
+            available: false,
+            error: error.message,
+            path: javaPath,
+          });
+          return;
+        }
+
+        const versionOutput = stderr || stdout;
+        console.log(`Java version output: ${versionOutput}`);
+
+        // Парсим версию Java
+        let majorVersion = null;
+
+        // Для Java 9+ формат: "17.0.1" или "java 17.0.1"
+        let match = versionOutput.match(/(?:java\s+)?(\d+)\.(\d+)\.(\d+)/);
+        if (match) {
+          majorVersion = parseInt(match[1]);
+        } else {
+          // Для Java 8 формат: "1.8.0_xxx"
+          match = versionOutput.match(/"1\.(\d+)\.(\d+)_?(\d+)?"/);
+          if (match) {
+            majorVersion = parseInt(match[1]); // 8 для Java 1.8
+          }
+        }
+
+        if (majorVersion === null) {
+          resolve({
+            available: true,
+            compatible: false,
+            error: "Не удалось определить версию Java",
+            version: "unknown",
+            path: javaPath,
+          });
+          return;
+        }
+
+        const compatible = majorVersion >= requiredVersion;
+
+        resolve({
+          available: true,
+          compatible,
+          majorVersion,
+          requiredVersion,
+          version: majorVersion.toString(),
+          path: javaPath,
+          output: versionOutput,
+        });
+      });
+    });
+  }
+
+  /**
+   * Ищет все установки Java в системе
+   */
+  async findJavaInstallations() {
+    const installations = [];
+    const platform = os.platform();
+
+    // Проверяем системную Java
+    const systemJava = await this.checkJavaCompatibility("java");
+    if (systemJava.available) {
+      installations.push({
+        ...systemJava,
+        name: "System Java",
+        location: "system",
+      });
+    }
+
+    // Ищем в стандартных папках
+    const searchPaths = [];
+
+    if (platform === "win32") {
+      searchPaths.push(
+        "C:\\Program Files\\Java",
+        "C:\\Program Files (x86)\\Java",
+        "C:\\Program Files\\Eclipse Adoptium",
+        "C:\\Program Files\\Microsoft\\jdk",
+        "C:\\Program Files\\BellSoft\\LibericaJDK-17",
+        "C:\\Program Files\\Amazon\\AWSCLI\\jdk",
+        path.join(os.homedir(), "AppData", "Local", "Programs", "AdoptOpenJDK"),
+        path.join(os.homedir(), ".jdks"),
+        "C:\\ProgramData\\Oracle\\Java\\javapath"
+      );
+    } else if (platform === "darwin") {
+      searchPaths.push(
+        "/Library/Java/JavaVirtualMachines",
+        "/System/Library/Java/JavaVirtualMachines",
+        "/usr/local/opt/openjdk",
+        "/opt/homebrew/opt/openjdk"
+      );
+    } else {
+      searchPaths.push(
+        "/usr/lib/jvm",
+        "/usr/java",
+        "/opt/java",
+        "/usr/local/java",
+        "/snap/openjdk"
+      );
+    }
+
+    for (const basePath of searchPaths) {
+      try {
+        if (await fs.pathExists(basePath)) {
+          const entries = await fs.readdir(basePath);
+
+          for (const entry of entries) {
+            const fullPath = path.join(basePath, entry);
+            const stat = await fs.stat(fullPath);
+
+            if (stat.isDirectory()) {
+              let javaExecutable;
+
+              if (platform === "win32") {
+                javaExecutable = path.join(fullPath, "bin", "java.exe");
+              } else {
+                javaExecutable = path.join(fullPath, "bin", "java");
+              }
+
+              if (await fs.pathExists(javaExecutable)) {
+                const javaInfo = await this.checkJavaCompatibility(
+                  javaExecutable
+                );
+                if (javaInfo.available) {
+                  installations.push({
+                    ...javaInfo,
+                    name: entry,
+                    location: fullPath,
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`Ошибка сканирования папки ${basePath}:`, error.message);
+      }
+    }
+
+    return installations;
+  }
+
+  /**
+   * Определяет минимальную версию Java для модпака
+   */
+  getRequiredJavaVersion(modpack) {
+    const mcVersion = modpack.minecraft_version || modpack.version;
+
+    // Minecraft версии и их требования к Java
+    if (mcVersion >= "1.18") {
+      return 17; // MC 1.18+ требует Java 17+
+    } else if (mcVersion >= "1.17") {
+      return 16; // MC 1.17 требует Java 16+
+    } else if (mcVersion >= "1.12") {
+      return 8; // MC 1.12-1.16 работает на Java 8+
+    } else {
+      return 8; // Старые версии MC
+    }
+  }
+
+  /**
+   * Находит подходящую версию Java для модпака
+   */
+  async findCompatibleJava(modpack) {
+    const requiredVersion = this.getRequiredJavaVersion(modpack);
+    console.log(`Модпак ${modpack.name} требует Java ${requiredVersion}+`);
+
+    // Сначала проверяем текущую Java из config
+    const currentJava = await this.checkJavaCompatibility(
+      this.config.java_path,
+      requiredVersion
+    );
+
+    if (currentJava.available && currentJava.compatible) {
+      console.log(`Текущая Java подходит: ${currentJava.version}`);
+      return currentJava;
+    }
+
+    console.log(
+      `Текущая Java не подходит (версия ${
+        currentJava.version || "unknown"
+      }), ищем альтернативы...`
+    );
+
+    // Ищем все доступные установки Java
+    const installations = await this.findJavaInstallations();
+    console.log(`Найдено установок Java: ${installations.length}`);
+
+    // Фильтруем совместимые версии
+    const compatible = installations.filter(
+      (java) =>
+        java.available &&
+        java.compatible &&
+        java.majorVersion >= requiredVersion
+    );
+
+    if (compatible.length === 0) {
+      throw new Error(
+        `Не найдена подходящая версия Java.\n` +
+          `Требуется: Java ${requiredVersion}+\n` +
+          `Найдено: ${
+            installations
+              .map((j) => `${j.name} (Java ${j.version})`)
+              .join(", ") || "нет"
+          }\n\n` +
+          `Скачайте Java ${requiredVersion}+ с https://adoptium.net/`
+      );
+    }
+
+    // Выбираем лучшую версию (самую новую)
+    const bestJava = compatible.sort(
+      (a, b) => b.majorVersion - a.majorVersion
+    )[0];
+
+    console.log(`Выбрана Java: ${bestJava.name} (версия ${bestJava.version})`);
+    console.log(`Путь: ${bestJava.path}`);
+
+    // Обновляем конфиг для будущих запусков
+    this.config.java_path = bestJava.path;
+    this.saveConfig();
+
+    return bestJava;
+  }
+
+  /**
+   * Сохраняет конфигурацию
+   */
+  saveConfig() {
+    try {
+      const configPath = path.join(__dirname, "config.json");
+      fs.writeFileSync(configPath, JSON.stringify(this.config, null, 2));
+    } catch (error) {
+      console.error("Ошибка сохранения конфигурации:", error);
+    }
+  }
+
+  async isValidZipFile(filePath) {
+    try {
+      const buffer = Buffer.alloc(4);
+      const fd = await fs.open(filePath, "r");
+      await fs.read(fd, buffer, 0, 4, 0);
+      await fs.close(fd);
+
+      // ZIP файлы начинаются с сигнатуры PK (0x504B)
+      return buffer[0] === 0x50 && buffer[1] === 0x4b;
+    } catch (error) {
+      console.error("Ошибка проверки ZIP файла:", error);
+      return false;
+    }
+  }
+
   async downloadModpack(modpack, onProgress) {
     const zipPath = path.join(this.tempDir, `${modpack.id}.zip`);
     const instancePath = path.join(this.instancesDir, modpack.id);
@@ -92,6 +352,14 @@ class MinecraftLauncher {
       console.log("Начинаем скачивание файла...");
       await this.downloadFile(downloadUrl, zipPath, onProgress);
       console.log("Файл скачан успешно");
+
+      // Проверяем что файл скачался и это действительно ZIP
+      const isValidZip = await this.isValidZipFile(zipPath);
+      if (!isValidZip) {
+        throw new Error(
+          "Скачанный файл поврежден или это не ZIP архив. Возможно, ссылка недоступна."
+        );
+      }
 
       // Проверяем что файл скачался
       const stats = await fs.stat(zipPath);
@@ -258,6 +526,7 @@ class MinecraftLauncher {
           {
             headers: {
               "User-Agent": "AzuraelLauncher/1.0.0",
+              Accept: "application/zip, application/octet-stream, */*",
             },
           },
           (response) => {
@@ -303,6 +572,20 @@ class MinecraftLauncher {
                 totalSize ? this.formatBytes(totalSize) : "неизвестно"
               }`
             );
+
+            // Проверяем Content-Type
+            const contentType = response.headers["content-type"] || "";
+            console.log(`Content-Type: ${contentType}`);
+
+            if (contentType.includes("text/html")) {
+              file.destroy();
+              reject(
+                new Error(
+                  "Сервер вернул HTML страницу вместо файла. Проверьте ссылку."
+                )
+              );
+              return;
+            }
 
             response.on("data", (chunk) => {
               downloadedSize += chunk.length;
@@ -481,58 +764,137 @@ class MinecraftLauncher {
       throw new Error("Модпак не установлен");
     }
 
+    // Находим подходящую версию Java
+    console.log("Проверяем совместимость Java...");
+    const javaInfo = await this.findCompatibleJava(modpack);
+    const javaPath = javaInfo.path;
+
+    console.log(`Используем Java: ${javaPath} (версия ${javaInfo.version})`);
+
     // Определяем версию Forge
     const forgeVersionName = `${modpack.version}-forge-${modpack.forge_version}`;
-    const forgeVersionDir = path.join(
-      instancePath,
-      "versions",
-      forgeVersionName
-    );
+    const versionsPath = path.join(instancePath, "versions");
 
-    if (!fs.existsSync(forgeVersionDir)) {
-      throw new Error(`Версия Forge не найдена: ${forgeVersionName}`);
+    console.log(`Ищем версию: ${forgeVersionName}`);
+    console.log(`В папке versions: ${versionsPath}`);
+
+    // Проверяем структуру версий
+    const forgeVersionDir = path.join(versionsPath, forgeVersionName);
+    const vanillaVersionDir = path.join(versionsPath, modpack.version);
+
+    let jarPath, jsonPath;
+
+    console.log(`Проверяем папку Forge: ${forgeVersionDir}`);
+    console.log(`Проверяем папку Vanilla: ${vanillaVersionDir}`);
+
+    // Определяем пути к файлам в зависимости от структуры
+    if (await fs.pathExists(forgeVersionDir)) {
+      // Если есть JSON в forge папке, но JAR может быть в vanilla папке
+      const forgeJson = path.join(forgeVersionDir, `${forgeVersionName}.json`);
+      const forgeJar = path.join(forgeVersionDir, `${forgeVersionName}.jar`);
+      const vanillaJar = path.join(vanillaVersionDir, `${modpack.version}.jar`);
+
+      console.log(`Проверяем Forge JSON: ${forgeJson}`);
+      console.log(`Проверяем Forge JAR: ${forgeJar}`);
+      console.log(`Проверяем Vanilla JAR: ${vanillaJar}`);
+
+      if (await fs.pathExists(forgeJson)) {
+        jsonPath = forgeJson;
+        console.log("Используем Forge JSON");
+      }
+
+      if (await fs.pathExists(forgeJar)) {
+        jarPath = forgeJar;
+        console.log("Используем Forge JAR");
+      } else if (await fs.pathExists(vanillaJar)) {
+        jarPath = vanillaJar;
+        console.log("Используем Vanilla JAR файл");
+      }
+    } else if (await fs.pathExists(vanillaVersionDir)) {
+      jarPath = path.join(vanillaVersionDir, `${modpack.version}.jar`);
+      jsonPath = path.join(vanillaVersionDir, `${modpack.version}.json`);
+      console.log("Используем только vanilla версию");
     }
 
-    // Ищем jar файл Forge
-    const forgeJarPath = path.join(forgeVersionDir, `${forgeVersionName}.jar`);
-    const forgeJsonPath = path.join(
-      forgeVersionDir,
-      `${forgeVersionName}.json`
-    );
+    if (!jarPath || !(await fs.pathExists(jarPath))) {
+      const availableFiles = [];
+      try {
+        if (await fs.pathExists(versionsPath)) {
+          const versionDirs = await fs.readdir(versionsPath);
+          for (const dir of versionDirs) {
+            const dirPath = path.join(versionsPath, dir);
+            if ((await fs.stat(dirPath)).isDirectory()) {
+              const files = await fs.readdir(dirPath);
+              availableFiles.push(`${dir}/: ${files.join(", ")}`);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Ошибка при чтении папки versions:", e);
+      }
 
-    if (!fs.existsSync(forgeJarPath)) {
-      throw new Error(`Jar файл Forge не найден: ${forgeJarPath}`);
+      throw new Error(
+        `JAR файл не найден.\nДоступные файлы в versions:\n${availableFiles.join(
+          "\n"
+        )}`
+      );
     }
 
-    if (!fs.existsSync(forgeJsonPath)) {
-      throw new Error(`JSON файл версии не найден: ${forgeJsonPath}`);
+    if (!jsonPath || !(await fs.pathExists(jsonPath))) {
+      console.warn(
+        `JSON файл не найден: ${jsonPath}, будем использовать минимальную конфигурацию`
+      );
     }
 
     // Читаем конфигурацию версии
     let versionInfo;
     try {
-      versionInfo = await fs.readJson(forgeJsonPath);
+      if (jsonPath && (await fs.pathExists(jsonPath))) {
+        versionInfo = await fs.readJson(jsonPath);
+        console.log("Загружена конфигурация версии из JSON");
+      } else {
+        // Используем минимальную конфигурацию
+        versionInfo = {
+          id: forgeVersionName,
+          type: "release",
+          mainClass: "net.minecraftforge.client.loading.ClientModLoader",
+          libraries: [],
+          assetIndex: { id: modpack.version },
+        };
+        console.log("Используем минимальную конфигурацию версии");
+      }
     } catch (error) {
-      throw new Error(`Ошибка чтения конфигурации версии: ${error.message}`);
+      console.warn(
+        `Ошибка чтения JSON версии: ${error.message}, используем минимальную конфигурацию`
+      );
+      versionInfo = {
+        id: forgeVersionName,
+        type: "release",
+        mainClass: "net.minecraftforge.client.loading.ClientModLoader",
+        libraries: [],
+        assetIndex: { id: modpack.version },
+      };
     }
 
     // Создаем UUID для сессии (упрощенный)
     const uuid = this.generateUUID();
     const accessToken = "null"; // Для оффлайн режима
 
+    // Определяем папку для natives
+    const nativesPath = path.join(instancePath, "versions", "natives");
+
+    // Создаем папку natives если её нет
+    await fs.ensureDir(nativesPath);
+
     // Строим аргументы JVM
     const jvmArgs = [
       `-Xmx${modpack.memory}`,
       "-Xms1G",
-      `-Djava.library.path=${path.join(
-        instancePath,
-        "versions",
-        forgeVersionName,
-        "natives"
-      )}`,
+      ...(this.config.settings.java_args || []),
+      `-Djava.library.path=${nativesPath}`,
       "-Dminecraft.launcher.brand=azurael_launcher",
       "-Dminecraft.launcher.version=1.0.0",
-      `-Dminecraft.client.jar=${forgeJarPath}`,
+      `-Dminecraft.client.jar=${jarPath}`,
       "-Dfml.ignoreInvalidMinecraftCertificates=true",
       "-Dfml.ignorePatchDiscrepancies=true",
       "-cp",
@@ -542,7 +904,7 @@ class MinecraftLauncher {
     const classpath = await this.buildClasspath(
       instancePath,
       versionInfo,
-      forgeVersionName
+      jarPath
     );
     jvmArgs.push(classpath);
 
@@ -557,7 +919,7 @@ class MinecraftLauncher {
       "--username",
       username,
       "--version",
-      forgeVersionName,
+      versionInfo.id || forgeVersionName,
       "--gameDir",
       instancePath,
       "--assetsDir",
@@ -576,9 +938,11 @@ class MinecraftLauncher {
 
     const allArgs = [...jvmArgs, ...gameArgs];
 
-    console.log("Запуск Minecraft с аргументами:", allArgs.join(" "));
+    console.log("Команда запуска:");
+    console.log(`"${this.config.java_path}" ${allArgs.join(" ")}`);
 
-    const minecraft = spawn(this.config.java_path, allArgs, {
+    const minecraft = spawn(javaPath, allArgs, {
+      // Используем найденную Java вместо this.config.java_path
       cwd: instancePath,
       stdio: "pipe",
       detached: false,
@@ -605,20 +969,24 @@ class MinecraftLauncher {
     return minecraft;
   }
 
-  async buildClasspath(instancePath, versionInfo, forgeVersionName) {
+  async buildClasspath(instancePath, versionInfo, mainJarPath) {
     const classpath = [];
 
-    // Добавляем главный jar файл Forge
-    const forgeJarPath = path.join(
-      instancePath,
-      "versions",
-      forgeVersionName,
-      `${forgeVersionName}.jar`
-    );
-    classpath.push(forgeJarPath);
+    // Добавляем главный jar файл
+    classpath.push(mainJarPath);
+
+    // Добавляем библиотеки из папки libraries
+    const librariesPath = path.join(instancePath, "libraries");
+    if (await fs.pathExists(librariesPath)) {
+      console.log("Сканируем папку libraries...");
+      const libraryJars = await this.findJarFiles(librariesPath);
+      classpath.push(...libraryJars);
+      console.log(`Найдено ${libraryJars.length} библиотек`);
+    }
 
     // Добавляем библиотеки из конфигурации версии
     if (versionInfo.libraries) {
+      console.log("Обрабатываем библиотеки из JSON конфигурации...");
       for (const lib of versionInfo.libraries) {
         if (lib.downloads && lib.downloads.artifact) {
           const libPath = path.join(
@@ -626,7 +994,7 @@ class MinecraftLauncher {
             "libraries",
             lib.downloads.artifact.path
           );
-          if (fs.existsSync(libPath)) {
+          if ((await fs.pathExists(libPath)) && !classpath.includes(libPath)) {
             classpath.push(libPath);
           }
         }
@@ -635,16 +1003,41 @@ class MinecraftLauncher {
 
     // Добавляем моды
     const modsDir = path.join(instancePath, "mods");
-    if (fs.existsSync(modsDir)) {
-      const mods = await fs.readdir(modsDir);
-      for (const mod of mods) {
-        if (mod.endsWith(".jar")) {
-          classpath.push(path.join(modsDir, mod));
-        }
-      }
+    if (await fs.pathExists(modsDir)) {
+      console.log("Сканируем папку mods...");
+      const modJars = await this.findJarFiles(modsDir);
+      classpath.push(...modJars);
+      console.log(`Найдено ${modJars.length} модов`);
     }
 
+    console.log(`Общий classpath содержит ${classpath.length} элементов`);
     return classpath.join(path.delimiter);
+  }
+
+  // Вспомогательная функция для поиска JAR файлов
+  async findJarFiles(directory) {
+    const jarFiles = [];
+
+    try {
+      const items = await fs.readdir(directory);
+
+      for (const item of items) {
+        const itemPath = path.join(directory, item);
+        const stats = await fs.stat(itemPath);
+
+        if (stats.isDirectory()) {
+          // Рекурсивно ищем в подпапках
+          const subJars = await this.findJarFiles(itemPath);
+          jarFiles.push(...subJars);
+        } else if (item.endsWith(".jar")) {
+          jarFiles.push(itemPath);
+        }
+      }
+    } catch (error) {
+      console.warn(`Ошибка чтения папки ${directory}:`, error.message);
+    }
+
+    return jarFiles;
   }
 
   generateUUID() {
