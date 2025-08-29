@@ -13,20 +13,35 @@
       "description": "Solo Leveling - Reawakening",
       "author": "Azurael Team",
       "minecraft_version": "1.20.1"
+    },
+    {
+      "id": "neoforge_121",
+      "name": "NeoForge Pack",
+      "version": "1.21.1",
+      "modloader": "neoforge",
+      "forge_version": "21.1.72",
+      "memory": "8G",
+      "download_url": "https://example.com/neoforge-pack.zip",
+      "description": "Modern NeoForge modpack for MC 1.21+",
+      "author": "Azurael Team",
+      "minecraft_version": "1.21.1"
     }
   ],
   "settings": {
     "auto_update": true,
     "keep_launcher_open": false,
     "show_snapshots": false,
-    "default_memory": "4G",
+    "default_memory": "6G",
     "java_args": [
       "-XX:+UnlockExperimentalVMOptions",
       "-XX:+UseG1GC",
       "-XX:G1NewSizePercent=20",
       "-XX:G1ReservePercent=20",
       "-XX:MaxGCPauseMillis=50",
-      "-XX:G1HeapRegionSize=32M"
+      "-XX:G1HeapRegionSize=32M",
+      "-Dfml.earlyprogresswindow=false",
+      "-Dlog4j2.formatMsgNoLookups=true",
+      "-Dfile.encoding=UTF-8"
     ]
   }
 }
