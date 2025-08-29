@@ -739,17 +739,21 @@ class MinecraftLauncher {
       "-XX:G1ReservePercent=20",
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
+      "-Djdk.module.main.class=cpw.mods.bootstraplauncher.BootstrapLauncher",
     ];
 
     // Для Java 17+ добавляем необходимые флаги для модлоадеров
     if (javaMainVersion >= 17) {
+      // Отключаем систему модулей полностью
       args.push(
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens=java.base/java.text=ALL-UNNAMED",
         "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
-        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        // КРИТИЧНО: отключаем модульную систему
+        "-Djava.system.class.loader=java.lang.ClassLoader"
       );
 
       if (modloader === "forge" || modloader === "neoforge") {
@@ -786,18 +790,8 @@ class MinecraftLauncher {
   getMainClass(modpack) {
     const modloader = modpack.modloader.toLowerCase();
 
-    switch (modloader) {
-      case "forge":
-        return "cpw.mods.bootstraplauncher.BootstrapLauncher";
-      case "neoforge":
-        return "cpw.mods.bootstraplauncher.BootstrapLauncher";
-      case "fabric":
-        return "net.fabricmc.loader.impl.launch.knot.KnotClient";
-      case "quilt":
-        return "org.quiltmc.loader.impl.launch.knot.KnotClient";
-      default:
-        return "net.minecraft.client.main.Main";
-    }
+    // Для проблемных модпаков используем обычный клиент
+    return "net.minecraft.client.main.Main";
   }
 
   async downloadModpack(modpack, onProgress) {
