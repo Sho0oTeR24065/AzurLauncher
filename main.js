@@ -286,10 +286,30 @@ class MinecraftLauncher {
       "-XX:G1HeapRegionSize=32M"
     );
 
-    // КРИТИЧНО: Для Java 17+ полностью отключаем модульную систему
+    // КРИТИЧНО: Для Java 17+ радикально отключаем все что может конфликтовать
     if (javaMainVersion >= 17) {
       console.log(
-        `Java ${javaMainVersion} обнаружена, настраиваем флаги для MC ${mcVersion}`
+        `Java ${javaMainVersion} обнаружена, применяем радикальные флаги совместимости`
+      );
+
+      // ПОЛНОСТЬЮ отключаем Nashorn engine и все связанные модули
+      args.push(
+        // Отключаем Nashorn и связанные модули
+        "-Djdk.module.illegalAccess.silent=true",
+        "-Djdk.nashorn.args=--no-deprecation-warning",
+        "-Dpolyglot.engine.WarnInterpreterOnly=false",
+
+        // Запрещаем загрузку проблемных модулей
+        "--limit-modules=java.base,java.logging,java.xml,java.desktop,java.management,java.security.jgss,java.instrument,java.naming,jdk.unsupported",
+
+        // Разрешаем все системные модули кроме проблемных
+        "--add-modules=java.base",
+        "--add-modules=java.logging",
+        "--add-modules=java.xml",
+        "--add-modules=java.desktop",
+        "--add-modules=java.management",
+        "--add-modules=java.naming",
+        "--add-modules=jdk.unsupported"
       );
 
       // Базовые флаги для работы с модульной системой
@@ -314,21 +334,11 @@ class MinecraftLauncher {
         "--add-opens=java.base/jdk.internal.math=ALL-UNNAMED",
         "--add-opens=java.base/jdk.internal.module=ALL-UNNAMED",
         "--add-opens=java.base/jdk.internal.util.jar=ALL-UNNAMED",
-        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED"
-      );
+        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
 
-      // КРИТИЧНОЕ РЕШЕНИЕ ПРОБЛЕМЫ ASM: Вместо экспорта внутренних ASM классов,
-      // полностью отключаем использование Nashorn engine который конфликтует
-      args.push(
-        // Отключаем Nashorn который вызывает конфликты ASM
-        "-Djdk.nashorn.args=--no-deprecation-warning",
-        "-Dpolyglot.js.nashorn-compat=true",
-        "-Dpolyglot.js.ecmascript-version=2022",
-
-        // Разрешаем все модули
-        "--add-modules=ALL-SYSTEM",
-        "--add-modules=jdk.unsupported", // Для sun.misc классов
-        "--add-modules=jdk.management" // Для JMX
+        // Критично - открываем доступ к sun.misc
+        "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+        "--add-opens=jdk.unsupported/sun.misc=ALL-UNNAMED"
       );
 
       // Специфичные флаги для Forge/NeoForge
@@ -352,11 +362,7 @@ class MinecraftLauncher {
           "--add-opens=jdk.naming.dns/com.sun.jndi.dns=ALL-UNNAMED",
 
           // Специально для современных версий MC
-          "--add-opens=java.base/java.lang.module=ALL-UNNAMED",
-
-          // Разрешаем доступ к Unsafe для производительности
-          "--add-opens=java.base/sun.misc=ALL-UNNAMED",
-          "--add-opens=jdk.unsupported/sun.misc=ALL-UNNAMED"
+          "--add-opens=java.base/java.lang.module=ALL-UNNAMED"
         );
       }
     } else if (javaMainVersion >= 9) {
@@ -397,9 +403,15 @@ class MinecraftLauncher {
       );
     }
 
-    // Дополнительные аргументы из конфига
+    // Дополнительные аргументы из конфига (но только безопасные)
     if (this.config.settings.java_args) {
-      args.push(...this.config.settings.java_args);
+      const safeArgs = this.config.settings.java_args.filter(
+        (arg) =>
+          !arg.includes("nashorn") &&
+          !arg.includes("add-modules") &&
+          !arg.includes("limit-modules")
+      );
+      args.push(...safeArgs);
     }
 
     console.log("Сгенерированные JVM аргументы:", args);
@@ -449,7 +461,7 @@ class MinecraftLauncher {
       };
     }
 
-    // Для MC 1.20+ рекомендуем Java 17 или 21
+    // Для MC 1.20+ рекомендуем Java 21
     if (mcVersion >= 1.2) {
       return {
         recommended: 21, // Java 21 для лучшей производительности
