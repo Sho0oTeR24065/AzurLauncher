@@ -324,6 +324,101 @@
         display: none !important;
       }
 
+      .memory-slider {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 8px;
+        border-radius: 10px;
+        background: linear-gradient(
+          90deg,
+          #ff6b6b 0%,
+          #ffa726 30%,
+          #66bb6a 60%,
+          #42a5f5 100%
+        );
+        outline: none;
+        opacity: 0.8;
+        transition: opacity 0.3s;
+      }
+
+      .memory-slider:hover {
+        opacity: 1;
+      }
+
+      .memory-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: #667eea;
+        cursor: pointer;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        border: 2px solid white;
+      }
+
+      .memory-slider::-moz-range-thumb {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: #667eea;
+        cursor: pointer;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        border: 2px solid white;
+      }
+
+      .memory-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .memory-display {
+        font-size: 18px;
+        font-weight: 700;
+        color: #667eea;
+        background: rgba(102, 126, 234, 0.1);
+        padding: 8px 16px;
+        border-radius: 20px;
+        min-width: 80px;
+        text-align: center;
+      }
+
+      .memory-recommendation {
+        font-size: 12px;
+        padding: 6px 12px;
+        border-radius: 15px;
+        font-weight: 600;
+        max-width: 200px;
+        text-align: center;
+      }
+
+      .memory-recommendation.low {
+        background: rgba(255, 107, 107, 0.2);
+        color: #ff6b6b;
+        border: 1px solid rgba(255, 107, 107, 0.3);
+      }
+
+      .memory-recommendation.optimal {
+        background: rgba(102, 187, 106, 0.2);
+        color: #66bb6a;
+        border: 1px solid rgba(102, 187, 106, 0.3);
+      }
+
+      .memory-recommendation.high {
+        background: rgba(66, 165, 245, 0.2);
+        color: #42a5f5;
+        border: 1px solid rgba(66, 165, 245, 0.3);
+      }
+
+      .system-memory-info {
+        font-size: 11px;
+        color: #666;
+        text-align: center;
+        margin-top: 5px;
+      }
+
       /* Java установка модал */
       .java-modal {
         position: fixed;
@@ -436,6 +531,32 @@
           </small>
         </div>
         <div class="form-group">
+          <label for="memorySlider">💾 Выделение оперативной памяти</label>
+          <div style="margin-bottom: 15px">
+            <input
+              type="range"
+              id="memorySlider"
+              class="memory-slider"
+              min="4"
+              max="16"
+              value="8"
+              step="1"
+              style="width: 100%; margin-bottom: 10px"
+            />
+            <div class="memory-info">
+              <div class="memory-display">
+                <span id="memoryValue">8</span> GB
+              </div>
+              <div class="memory-recommendation" id="memoryRecommendation">
+                ✅ Рекомендуемое значение для комфортной игры
+              </div>
+            </div>
+            <div class="system-memory-info" id="systemMemoryInfo">
+              Определение объема системной памяти...
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
           <label>📦 Выберите модпак</label>
           <div class="modpack-list" id="modpackList">
             <!-- Модпаки загружаются динамически -->
@@ -521,18 +642,118 @@
       let modpacks = [];
       let selectedModpack = null;
       let javaReady = false;
+      // Переменные для памяти
+      let systemMemoryGB = 32; // По умолчанию
+      let selectedMemoryGB = 8;
+
+      // Инициализация ползунка памяти
+      function initializeMemorySlider() {
+        const slider = document.getElementById("memorySlider");
+        const valueDisplay = document.getElementById("memoryValue");
+        const recommendation = document.getElementById("memoryRecommendation");
+
+        // Загружаем сохраненное значение
+        const savedMemory = localStorage.getItem("selectedMemory");
+        if (savedMemory) {
+          selectedMemoryGB = parseInt(savedMemory);
+          slider.value = selectedMemoryGB;
+          valueDisplay.textContent = selectedMemoryGB;
+        }
+
+        slider.addEventListener("input", function () {
+          selectedMemoryGB = parseInt(this.value);
+          valueDisplay.textContent = selectedMemoryGB;
+          updateMemoryRecommendation();
+
+          // Автосохранение
+          localStorage.setItem("selectedMemory", selectedMemoryGB);
+        });
+
+        updateMemoryRecommendation();
+      }
+
+      function updateMemoryRecommendation() {
+        const recommendation = document.getElementById("memoryRecommendation");
+
+        if (selectedMemoryGB < 6) {
+          recommendation.textContent = "⚠️ Низкое значение, возможны лаги";
+          recommendation.className = "memory-recommendation low";
+        } else if (selectedMemoryGB >= 6 && selectedMemoryGB <= 10) {
+          recommendation.textContent =
+            "✅ Рекомендуемое значение для комфортной игры";
+          recommendation.className = "memory-recommendation optimal";
+        } else {
+          recommendation.textContent =
+            "🚀 Высокое значение для максимальной производительности";
+          recommendation.className = "memory-recommendation high";
+        }
+      }
+
+      // Получение информации о системной памяти
+      async function getSystemMemoryInfo() {
+        try {
+          const memoryInfo = await ipcRenderer.invoke("get-system-memory");
+          if (memoryInfo.success) {
+            systemMemoryGB = memoryInfo.totalGB;
+            const maxRecommended = Math.min(
+              Math.floor(systemMemoryGB * 0.7),
+              32
+            );
+
+            // Обновляем максимальное значение ползунка
+            const slider = document.getElementById("memorySlider");
+            slider.max = maxRecommended;
+
+            // Если выбранное значение больше максимального - корректируем
+            if (selectedMemoryGB > maxRecommended) {
+              selectedMemoryGB = maxRecommended;
+              slider.value = selectedMemoryGB;
+              document.getElementById("memoryValue").textContent =
+                selectedMemoryGB;
+              localStorage.setItem("selectedMemory", selectedMemoryGB);
+            }
+
+            document.getElementById(
+              "systemMemoryInfo"
+            ).textContent = `Система: ${systemMemoryGB} GB, максимально для игры: ${maxRecommended} GB`;
+          }
+        } catch (error) {
+          console.error("Ошибка получения информации о памяти:", error);
+        }
+      }
 
       async function selectJavaPath() {
         try {
+          // НОВАЯ ПРОВЕРКА: если Java уже готова - предупреждаем пользователя
+          if (javaReady) {
+            const confirmed = confirm(
+              "Java уже настроена и работает корректно.\n\n" +
+                "Вы действительно хотите выбрать другую версию Java?\n\n" +
+                "Это может привести к проблемам совместимости."
+            );
+
+            if (!confirmed) {
+              updateStatus("☕ Используется текущая Java", "info");
+              return;
+            }
+          }
+
           const result = await ipcRenderer.invoke("select-java-path");
+
           if (result.success && result.path) {
             // Показываем выбранный путь в интерфейсе
             document.getElementById("javaPath").value = result.path;
-            updateStatus(`☕ Выбрана Java: ${result.version}`, "success");
 
-            // Сохраняем выбор
-            await ipcRenderer.invoke("save-java-path", result.path);
+            let message = `☕ Выбрана Java: ${result.version}`;
+            if (result.autoSelected) {
+              message = `☕ ${result.message}: ${result.version}`;
+            }
+
+            updateStatus(message, "success");
+
             javaReady = true;
+
+            updateJavaButtonText();
 
             await loadModpacks();
 
@@ -540,11 +761,13 @@
             if (selectedModpack) {
               updateSelectedModpack();
             }
+          } else if (result.showError && result.error) {
+            // Показываем ошибку пользователю
+            updateStatus(`❌ ${result.error}`, "error");
+          } else if (result.message) {
+            updateStatus(`⚠️ ${result.message}`, "warning");
           } else {
-            updateStatus(
-              "⚠️ Java не выбрана. Выберите Java для продолжения.",
-              "warning"
-            );
+            updateStatus("⚠️ Java не выбрана", "warning");
           }
         } catch (error) {
           updateStatus("❌ Ошибка выбора Java: " + error.message, "error");
@@ -554,15 +777,16 @@
       async function initialize() {
         console.log("🚀 Запуск initialize()");
 
-        // Убеждаемся что модальное окно Java скрыто при запуске
         const javaModal = document.getElementById("javaModal");
         if (!javaModal.classList.contains("hidden")) {
           console.log("⚠️ Java модал был виден при запуске - скрываем его");
           javaModal.classList.add("hidden");
         }
 
-        // Загружаем сохраненные настройки (никнейм и модпак)
         const lastModpackId = await loadSavedSettings();
+
+        initializeMemorySlider();
+        await getSystemMemoryInfo();
 
         updateStatus("🔍 Проверка Java...", "info");
 
@@ -574,7 +798,6 @@
             javaReady = true;
             console.log(`✅ Java готова: ${javaCheck.java.majorVersion}`);
 
-            // ИСПРАВЛЕНИЕ: показываем правильный путь в интерфейсе
             const displayPath =
               javaCheck.java.displayPath ||
               javaCheck.java.path ||
@@ -586,13 +809,13 @@
               `☕ Java ${javaCheck.java.majorVersion} готова`,
               "success"
             );
+            updateJavaButtonText();
+
             await loadModpacks();
 
-            // Восстанавливаем выбранный модпак
             if (lastModpackId) {
               restoreSelectedModpack(lastModpackId);
             }
-
             return;
           }
 
@@ -602,14 +825,27 @@
           // Очищаем поле пути Java если проверка не прошла
           document.getElementById("javaPath").value = "";
 
-          updateStatus(
-            "⚠️ Java 17+ не найдена. Выберите Java вручную или скачайте автоматически.",
-            "warning"
+          // Проверяем есть ли скачанная Java для автовыбора
+          const autoSelect = await ipcRenderer.invoke(
+            "auto-select-downloaded-java"
           );
+          if (autoSelect.success) {
+            javaReady = true;
+            document.getElementById("javaPath").value = autoSelect.path;
+            updateStatus(
+              `☕ ${autoSelect.message}: ${autoSelect.version}`,
+              "success"
+            );
+            updateJavaButtonText();
+          } else {
+            updateStatus(
+              "⚠️ Java 17+ не найдена. Выберите Java вручную или скачайте автоматически.",
+              "warning"
+            );
+          }
 
           await loadModpacks();
 
-          // Восстанавливаем выбранный модпак даже без Java
           if (lastModpackId) {
             restoreSelectedModpack(lastModpackId);
           }
@@ -620,6 +856,20 @@
       }
 
       async function downloadJavaManually() {
+        // НОВАЯ ПРОВЕРКА: если Java уже готова - предупреждаем
+        if (javaReady) {
+          const confirmed = confirm(
+            "Java уже настроена и работает корректно.\n\n" +
+              "Вы действительно хотите скачать и установить новую версию Java?\n\n" +
+              "Это заменит текущие настройки."
+          );
+
+          if (!confirmed) {
+            updateStatus("☕ Используется текущая Java", "info");
+            return;
+          }
+        }
+
         const confirmed = confirm(
           "Скачать и установить Java 21 автоматически?\n\nЭто займет несколько минут."
         );
@@ -637,27 +887,33 @@
           );
           if (downloadResult.success) {
             hideJavaModal();
-            // Перепроверяем Java
-            const retryCheck = await ipcRenderer.invoke("check-java");
-            if (retryCheck.success) {
+
+            if (downloadResult.autoSet) {
+              // Java автоматически установлена и выбрана
+              document.getElementById("javaPath").value = downloadResult.path;
               javaReady = true;
+              updateStatus("☕ Java 21 установлена и активирована", "success");
 
-              // ИСПРАВЛЕНИЕ: показываем правильный путь установленной Java
-              const displayPath =
-                retryCheck.java.displayPath || retryCheck.java.path;
-              document.getElementById("javaPath").value = displayPath;
-
-              updateStatus(
-                `☕ Java ${retryCheck.java.majorVersion} установлена`,
-                "success"
-              );
-
-              // Обновляем кнопки если выбран модпак
-              if (selectedModpack) {
-                updateSelectedModpack();
-              }
+              updateJavaButtonText();
             } else {
-              throw new Error("Java установлена, но не прошла проверку");
+              // Перепроверяем Java
+              const retryCheck = await ipcRenderer.invoke("check-java");
+              if (retryCheck.success) {
+                javaReady = true;
+                document.getElementById("javaPath").value =
+                  retryCheck.java.displayPath || retryCheck.java.path;
+                updateStatus(
+                  `☕ Java ${retryCheck.java.majorVersion} установлена`,
+                  "success"
+                );
+
+                updateJavaButtonText();
+              }
+            }
+
+            // Обновляем кнопки если выбран модпак
+            if (selectedModpack) {
+              updateSelectedModpack();
             }
           } else {
             throw new Error(downloadResult.error);
@@ -844,6 +1100,19 @@
         }
       }
 
+      function updateJavaButtonText() {
+        const javaPathInput = document.getElementById("javaPath");
+        const selectButton = document.querySelector(
+          'button[onclick="selectJavaPath()"]'
+        );
+
+        if (javaReady && selectButton) {
+          selectButton.textContent = "🔄 Изменить";
+          selectButton.title =
+            "Изменить выбранную Java (текущая работает корректно)";
+        }
+      }
+
       async function downloadModpack() {
         if (!selectedModpack || !javaReady) return;
 
@@ -929,7 +1198,8 @@
           const result = await ipcRenderer.invoke(
             "launch-minecraft",
             username,
-            selectedModpack
+            selectedModpack,
+            selectedMemoryGB // ДОБАВИТЬ этот параметр
           );
 
           if (result.success) {
@@ -954,6 +1224,21 @@
         const statusElement = document.getElementById("status");
         statusElement.textContent = message;
         statusElement.className = "status " + type;
+      }
+
+      function updateJavaButtonText() {
+        const selectButton = document.querySelector(
+          'button[onclick="selectJavaPath()"]'
+        );
+
+        if (javaReady && selectButton) {
+          selectButton.textContent = "🔄 Изменить";
+          selectButton.title =
+            "Изменить выбранную Java (текущая работает корректно)";
+        } else if (selectButton) {
+          selectButton.textContent = "📂 Выбрать";
+          selectButton.title = "Выбрать Java вручную";
+        }
       }
 
       // Обработка Enter в поле никнейма

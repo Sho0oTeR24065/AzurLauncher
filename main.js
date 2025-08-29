@@ -108,65 +108,76 @@ class MinecraftLauncher {
     return new Promise((resolve) => {
       console.log(`Проверяем Java: ${javaPath}`);
 
-      exec(`"${javaPath}" -version`, (error, stdout, stderr) => {
-        if (error) {
-          console.log(`❌ Ошибка выполнения Java: ${error.message}`);
-          resolve({
-            available: false,
-            error: error.message,
-            path: javaPath,
-          });
-          return;
-        }
-
-        const versionOutput = stderr || stdout;
-        console.log(`Вывод Java: ${versionOutput}`);
-
-        // Улучшенный парсинг версии
-        let majorVersion = null;
-
-        // Для современных версий Java
-        let match = versionOutput.match(
-          /(?:openjdk|java)\s+version\s+"?(\d+)(?:\.(\d+))?/i
-        );
-        if (match) {
-          majorVersion = parseInt(match[1]);
-        } else {
-          // Альтернативный способ парсинга
-          match = versionOutput.match(/"(\d+)\.(\d+)\./);
-          if (match) {
-            majorVersion =
-              parseInt(match[1]) === 1
-                ? parseInt(match[2])
-                : parseInt(match[1]);
+      exec(
+        `"${javaPath}" -version`,
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
+            LANG: "en_US.UTF-8",
+          },
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            console.log(`❌ Ошибка выполнения Java: ${error.message}`);
+            resolve({
+              available: false,
+              error: error.message,
+              path: javaPath,
+            });
+            return;
           }
-        }
 
-        console.log(`Определена версия Java: ${majorVersion}`);
+          const versionOutput = stderr || stdout;
+          console.log(`Вывод Java: ${versionOutput}`);
 
-        if (majorVersion === null) {
+          // Улучшенный парсинг версии
+          let majorVersion = null;
+
+          // Для современных версий Java
+          let match = versionOutput.match(
+            /(?:openjdk|java)\s+version\s+"?(\d+)(?:\.(\d+))?/i
+          );
+          if (match) {
+            majorVersion = parseInt(match[1]);
+          } else {
+            // Альтернативный способ парсинга
+            match = versionOutput.match(/"(\d+)\.(\d+)\./);
+            if (match) {
+              majorVersion =
+                parseInt(match[1]) === 1
+                  ? parseInt(match[2])
+                  : parseInt(match[1]);
+            }
+          }
+
+          console.log(`Определена версия Java: ${majorVersion}`);
+
+          if (majorVersion === null) {
+            resolve({
+              available: true,
+              compatible: false,
+              error: "Не удалось определить версию Java",
+              version: "unknown",
+              path: javaPath,
+            });
+            return;
+          }
+
+          const compatible = majorVersion >= 17;
+          console.log(`Java ${majorVersion} совместима: ${compatible}`);
+
           resolve({
             available: true,
-            compatible: false,
-            error: "Не удалось определить версию Java",
-            version: "unknown",
+            compatible,
+            majorVersion,
+            version: majorVersion.toString(),
             path: javaPath,
+            isModern: majorVersion >= 17,
           });
-          return;
         }
-
-        const compatible = majorVersion >= 17;
-        console.log(`Java ${majorVersion} совместима: ${compatible}`);
-
-        resolve({
-          available: true,
-          compatible,
-          majorVersion,
-          version: majorVersion.toString(),
-          path: javaPath,
-          isModern: majorVersion >= 17,
-        });
-      });
+      );
     });
   }
 
@@ -656,13 +667,19 @@ class MinecraftLauncher {
     };
   }
 
+  async saveJavaPath(javaPath) {
+    this.config.java_path = javaPath;
+    this.saveConfig();
+    console.log(`Saved Java path: ${javaPath}`);
+  }
+
   async findSystemJavaPath() {
     return new Promise((resolve) => {
       const { exec } = require("child_process");
 
       if (os.platform() === "win32") {
         // В Windows используем where java
-        exec("where java", (error, stdout) => {
+        exec("where java", { encoding: "utf8" }, (error, stdout) => {
           if (error) {
             resolve(null);
             return;
@@ -1045,7 +1062,7 @@ class MinecraftLauncher {
     }
   }
 
-  async launchMinecraft(username, modpack) {
+  async launchMinecraft(username, modpack, customMemoryGB) {
     const instancePath = path.join(this.instancesDir, modpack.id);
 
     if (!fs.existsSync(instancePath)) {
@@ -1057,7 +1074,11 @@ class MinecraftLauncher {
     const javaPath = javaInfo.path;
 
     // Строим аргументы запуска
-    const jvmArgs = this.getJVMArgs(modpack, javaInfo.majorVersion);
+    const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
+    const jvmArgs = this.getJVMArgs(
+      { ...modpack, memory },
+      javaInfo.majorVersion
+    );
     const classpath = await this.buildClasspath(instancePath, modpack);
 
     jvmArgs.push(
@@ -1240,20 +1261,22 @@ ipcMain.handle("download-modpack", async (event, modpack) => {
   }
 });
 
-ipcMain.handle("launch-minecraft", async (event, username, modpack) => {
-  try {
-    await launcher.launchMinecraft(username, modpack);
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error.message };
+ipcMain.handle(
+  "launch-minecraft",
+  async (event, username, modpack, memoryGB) => {
+    try {
+      await launcher.launchMinecraft(username, modpack, memoryGB);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   }
-});
+);
 
 ipcMain.handle("check-java", async () => {
   try {
     console.log("🔍 Начинаем проверку Java...");
     const javaInfo = await launcher.ensureJavaAvailable();
-    console.log("📋 Результат ensureJavaAvailable:", javaInfo);
 
     // ИСПРАВЛЕНИЕ: проверяем правильные поля
     if (javaInfo.available === true && javaInfo.compatible === true) {
@@ -1279,6 +1302,8 @@ ipcMain.handle("select-java-path", async () => {
   try {
     const result = await dialog.showOpenDialog(launcher.mainWindow, {
       title: "Выберите исполняемый файл Java",
+      // Открываем диалог в папке со скачанной Java (если есть)
+      defaultPath: path.join(launcher.javaDir, "java21", "bin"),
       filters: [
         {
           name: "Java исполняемый файл",
@@ -1290,7 +1315,7 @@ ipcMain.handle("select-java-path", async () => {
     });
 
     if (result.canceled || result.filePaths.length === 0) {
-      return { success: false };
+      return { success: false, message: "Выбор отменен пользователем" };
     }
 
     const javaPath = result.filePaths[0];
@@ -1299,20 +1324,75 @@ ipcMain.handle("select-java-path", async () => {
     const javaInfo = await launcher.checkJavaCompatibility(javaPath);
 
     if (!javaInfo.available) {
-      throw new Error("Выбранный файл не является исполняемым файлом Java");
+      return {
+        success: false,
+        error: "Выбранный файл не является исполняемым файлом Java",
+        showError: true,
+      };
     }
 
     if (!javaInfo.compatible) {
-      throw new Error(
-        `Выбранная версия Java ${javaInfo.version} не поддерживается. Требуется Java 17+`
-      );
+      return {
+        success: false,
+        error: `Выбранная версия Java не поддерживается. Требуется Java 17+`,
+        showError: true,
+      };
     }
+
+    // Сохраняем выбранную Java
+    await launcher.saveJavaPath(javaPath);
 
     return {
       success: true,
       path: javaPath,
       version: javaInfo.version,
     };
+  } catch (error) {
+    return { success: false, error: error.message, showError: true };
+  }
+});
+
+ipcMain.handle("get-system-memory", async () => {
+  try {
+    const totalBytes = os.totalmem();
+    const totalGB = Math.round(totalBytes / (1024 * 1024 * 1024));
+
+    return {
+      success: true,
+      totalBytes,
+      totalGB,
+      freeBytes: os.freemem(),
+      freeGB: Math.round(os.freemem() / (1024 * 1024 * 1024)),
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("auto-select-downloaded-java", async () => {
+  try {
+    const downloadedJavaPath = path.join(launcher.javaDir, "java21");
+    const downloadedJavaExe = await launcher.findJavaExecutableInDir(
+      downloadedJavaPath
+    );
+
+    if (downloadedJavaExe && (await fs.pathExists(downloadedJavaExe))) {
+      console.log(`Found downloaded Java: ${downloadedJavaExe}`);
+
+      const javaInfo = await launcher.checkJavaCompatibility(downloadedJavaExe);
+      if (javaInfo.available && javaInfo.compatible) {
+        await launcher.saveJavaPath(downloadedJavaExe);
+        return {
+          success: true,
+          path: downloadedJavaExe,
+          version: javaInfo.version,
+          autoSelected: true,
+          message: "Используется ранее скачанная Java",
+        };
+      }
+    }
+
+    return { success: false, message: "Скачанная Java не найдена" };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -1366,7 +1446,11 @@ ipcMain.handle("get-saved-java-path", async () => {
 ipcMain.handle("download-java-manually", async (event) => {
   try {
     const javaPath = await launcher.downloadJava();
-    return { success: true, path: javaPath };
+
+    // Автоматически сохраняем скачанную Java
+    await launcher.saveJavaPath(javaPath);
+
+    return { success: true, path: javaPath, autoSet: true };
   } catch (error) {
     return { success: false, error: error.message };
   }
