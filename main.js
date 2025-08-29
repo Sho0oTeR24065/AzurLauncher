@@ -35,29 +35,51 @@ class MinecraftLauncher {
     try {
       if (fs.existsSync(configPath)) {
         this.config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+        // Добавляем новые поля если их нет
+        if (!this.config.last_username) {
+          this.config.last_username = "";
+        }
+        if (!this.config.last_selected_modpack) {
+          this.config.last_selected_modpack = null;
+        }
       } else {
         this.config = {
           java_path: null,
           launcher_name: "Azurael Launcher",
+          last_username: "", // НОВОЕ поле
+          last_selected_modpack: null, // НОВОЕ поле
           modpacks: [],
           settings: {
             auto_update: true,
             keep_launcher_open: false,
-            default_memory: "6G",
+            default_memory: "8G",
+            java_min_version: 17,
+            java_recommended_version: 21,
           },
         };
         fs.writeFileSync(configPath, JSON.stringify(this.config, null, 2));
       }
+
+      console.log("📋 Конфигурация загружена:", {
+        java_path: this.config.java_path,
+        last_username: this.config.last_username,
+        last_selected_modpack: this.config.last_selected_modpack,
+      });
     } catch (error) {
       console.error("Ошибка загрузки конфигурации:", error);
       this.config = {
         java_path: null,
         launcher_name: "Azurael Launcher",
+        last_username: "",
+        last_selected_modpack: null,
         modpacks: [],
         settings: {
           auto_update: true,
           keep_launcher_open: false,
-          default_memory: "6G",
+          default_memory: "8G",
+          java_min_version: 17,
+          java_recommended_version: 21,
         },
       };
     }
@@ -234,35 +256,39 @@ class MinecraftLauncher {
     const platform = os.platform();
     const arch = os.arch();
 
-    // Используем более надежные ссылки
+    // Используем прямые ссылки на стабильные версии
     let javaUrl, fileName;
 
     if (platform === "win32" && arch === "x64") {
-      // Прямая ссылка на Adoptium
+      // Используем более стабильную прямую ссылку
       javaUrl =
-        "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse";
+        "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.5%2B11/OpenJDK21U-jdk_x64_windows_hotspot_21.0.5_11.zip";
       fileName = "java21-windows-x64.zip";
+    } else if (platform === "win32" && arch === "ia32") {
+      javaUrl =
+        "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.5%2B11/OpenJDK21U-jdk_x86-32_windows_hotspot_21.0.5_11.zip";
+      fileName = "java21-windows-x86.zip";
     } else if (platform === "darwin") {
       javaUrl =
-        "https://api.adoptium.net/v3/binary/latest/21/ga/mac/x64/jdk/hotspot/normal/eclipse";
+        "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.5%2B11/OpenJDK21U-jdk_x64_mac_hotspot_21.0.5_11.tar.gz";
       fileName = "java21-mac-x64.tar.gz";
     } else {
       javaUrl =
-        "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse";
+        "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.5%2B11/OpenJDK21U-jdk_x64_linux_hotspot_21.0.5_11.tar.gz";
       fileName = "java21-linux-x64.tar.gz";
     }
 
     const javaZipPath = path.join(this.tempDir, fileName);
     const javaInstallPath = path.join(this.javaDir, "java21");
 
-    // ИСПРАВИТЬ: добавить проверку и создание директорий
+    // Создаем директории
     await fs.ensureDir(this.tempDir);
     await fs.ensureDir(this.javaDir);
 
     console.log(`Скачиваю Java с: ${javaUrl}`);
 
     // Скачиваем Java с улучшенным прогрессом
-    await this.downloadFile(javaUrl, javaZipPath, (progress) => {
+    await this.downloadFileWithRedirects(javaUrl, javaZipPath, (progress) => {
       console.log(`Java download progress: ${progress}%`);
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.webContents.send("java-download-progress", progress);
@@ -291,6 +317,156 @@ class MinecraftLauncher {
     await fs.remove(javaZipPath);
 
     return javaExecutable;
+  }
+
+  downloadFileWithRedirects(url, filepath, onProgress) {
+    return new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(filepath);
+      let attempt = 0;
+      const maxAttempts = 3;
+      const maxRedirects = 5;
+
+      const tryDownload = (downloadUrl, redirectCount = 0) => {
+        attempt++;
+
+        if (redirectCount > maxRedirects) {
+          reject(new Error("Слишком много редиректов"));
+          return;
+        }
+
+        console.log(`Попытка ${attempt}: скачивание с ${downloadUrl}`);
+
+        const request = https.get(
+          downloadUrl,
+          {
+            headers: {
+              "User-Agent": "AzuraelLauncher/1.0.0",
+              Accept:
+                "application/zip, application/tar+gzip, application/octet-stream, */*",
+              "Accept-Encoding": "identity", // Отключаем сжатие для простоты
+            },
+            timeout: 30000,
+          },
+          (response) => {
+            console.log(
+              `Ответ сервера: ${response.statusCode} ${response.statusMessage}`
+            );
+
+            // Обрабатываем редиректы
+            if (
+              response.statusCode === 301 ||
+              response.statusCode === 302 ||
+              response.statusCode === 307 ||
+              response.statusCode === 308
+            ) {
+              const redirectUrl = response.headers.location;
+              console.log(`Редирект на: ${redirectUrl}`);
+
+              if (!redirectUrl) {
+                reject(new Error("Получен редирект без URL"));
+                return;
+              }
+
+              // Следуем по редиректу
+              setTimeout(() => {
+                tryDownload(redirectUrl, redirectCount + 1);
+              }, 1000);
+              return;
+            }
+
+            if (response.statusCode !== 200) {
+              if (attempt < maxAttempts) {
+                console.log(
+                  `Ошибка ${response.statusCode}, повтор через 2 секунды...`
+                );
+                setTimeout(() => tryDownload(downloadUrl, redirectCount), 2000);
+                return;
+              } else {
+                reject(
+                  new Error(
+                    `HTTP ${response.statusCode}: ${response.statusMessage}`
+                  )
+                );
+                return;
+              }
+            }
+
+            const totalSize = parseInt(response.headers["content-length"], 10);
+            let downloadedSize = 0;
+
+            console.log(
+              `Начинаю загрузку, размер: ${
+                totalSize
+                  ? Math.round(totalSize / (1024 * 1024)) + " MB"
+                  : "неизвестен"
+              }`
+            );
+
+            response.on("data", (chunk) => {
+              downloadedSize += chunk.length;
+              if (onProgress) {
+                if (totalSize && totalSize > 0) {
+                  const progress = Math.round(
+                    (downloadedSize / totalSize) * 100
+                  );
+                  onProgress(progress);
+                } else {
+                  // Если размер неизвестен, показываем прогресс по объему
+                  const mbDownloaded = Math.round(
+                    downloadedSize / (1024 * 1024)
+                  );
+                  onProgress(Math.min(mbDownloaded * 2, 95)); // Примерный прогресс
+                }
+              }
+            });
+
+            response.pipe(file);
+
+            file.on("finish", () => {
+              file.close();
+              console.log(
+                `✅ Загрузка завершена: ${Math.round(
+                  downloadedSize / (1024 * 1024)
+                )} MB`
+              );
+              resolve();
+            });
+
+            file.on("error", (error) => {
+              fs.unlink(filepath, () => {});
+              if (attempt < maxAttempts) {
+                setTimeout(() => tryDownload(downloadUrl, redirectCount), 2000);
+              } else {
+                reject(error);
+              }
+            });
+          }
+        );
+
+        request.on("error", (error) => {
+          console.log(`Ошибка запроса: ${error.message}`);
+          if (attempt < maxAttempts) {
+            setTimeout(() => tryDownload(downloadUrl, redirectCount), 3000);
+          } else {
+            fs.unlink(filepath, () => {});
+            reject(error);
+          }
+        });
+
+        request.on("timeout", () => {
+          request.destroy();
+          console.log("Таймаут запроса");
+          if (attempt < maxAttempts) {
+            setTimeout(() => tryDownload(downloadUrl, redirectCount), 2000);
+          } else {
+            fs.unlink(filepath, () => {});
+            reject(new Error("Таймаут скачивания"));
+          }
+        });
+      };
+
+      tryDownload(url);
+    });
   }
 
   async findJavaExecutableInDir(dir) {
@@ -390,8 +566,8 @@ class MinecraftLauncher {
   async ensureJavaAvailable() {
     console.log("🔍 Запуск ensureJavaAvailable...");
 
-    // Сначала проверяем сохраненный путь
-    if (this.config.java_path) {
+    // 1. Сначала проверяем сохраненный путь (если это не "java")
+    if (this.config.java_path && this.config.java_path !== "java") {
       console.log(`Проверяем сохраненную Java: ${this.config.java_path}`);
       const savedJava = await this.checkJavaCompatibility(
         this.config.java_path
@@ -400,13 +576,49 @@ class MinecraftLauncher {
 
       if (savedJava.available && savedJava.compatible) {
         console.log(`✅ Используем сохраненную Java`);
-        return savedJava; // ВОЗВРАЩАЕМ УСПЕШНЫЙ РЕЗУЛЬТАТ
+        return {
+          available: true,
+          compatible: true,
+          majorVersion: savedJava.majorVersion,
+          version: savedJava.version,
+          path: savedJava.path,
+          displayPath: savedJava.path, // Полный путь для отображения
+          isModern: savedJava.isModern || true,
+        };
       } else {
         console.log("❌ Сохраненная Java не подходит");
       }
     }
 
-    // Ищем установленные версии
+    // 2. Проверяем системную Java (java команда в PATH)
+    console.log("🔍 Проверяем системную Java...");
+    const systemJava = await this.checkJavaCompatibility("java");
+    console.log("Результат проверки системной Java:", systemJava);
+
+    if (systemJava.available && systemJava.compatible) {
+      console.log(
+        `✅ Найдена системная Java (версия ${systemJava.majorVersion})`
+      );
+
+      // Пытаемся найти полный путь к системной Java
+      const fullJavaPath = await this.findSystemJavaPath();
+
+      // Сохраняем системную Java с полным путем если нашли, иначе "java"
+      this.config.java_path = fullJavaPath || "java";
+      this.saveConfig();
+
+      return {
+        available: true,
+        compatible: true,
+        majorVersion: systemJava.majorVersion,
+        version: systemJava.version,
+        path: "java", // Для запуска используем команду java
+        displayPath: fullJavaPath || "Системная Java", // Для отображения
+        isModern: systemJava.isModern || true,
+      };
+    }
+
+    // 3. Ищем установленные версии
     console.log("🔍 Ищем установленные версии Java...");
     const installations = await this.findJavaInstallations();
     console.log(`📊 Найдено установок Java: ${installations.length}`);
@@ -422,17 +634,64 @@ class MinecraftLauncher {
         );
         this.config.java_path = bestJava.path;
         this.saveConfig();
-        return bestJava; // ВОЗВРАЩАЕМ УСПЕШНЫЙ РЕЗУЛЬТАТ
+
+        return {
+          available: true,
+          compatible: true,
+          majorVersion: bestJava.majorVersion,
+          version: bestJava.version,
+          path: bestJava.path,
+          displayPath: bestJava.path,
+          isModern: bestJava.isModern || true,
+        };
       }
     }
 
-    // Если ничего не найдено - возвращаем ошибку, НЕ выбрасываем исключение
+    // Если ничего не найдено - возвращаем ошибку
     console.log("❌ Подходящая Java не найдена");
     return {
       available: false,
       compatible: false,
       error: "Java 17+ не найдена в системе",
     };
+  }
+
+  async findSystemJavaPath() {
+    return new Promise((resolve) => {
+      const { exec } = require("child_process");
+
+      if (os.platform() === "win32") {
+        // В Windows используем where java
+        exec("where java", (error, stdout) => {
+          if (error) {
+            resolve(null);
+            return;
+          }
+
+          const javaPath = stdout.trim().split("\n")[0]; // Берем первый путь
+          if (javaPath && javaPath.endsWith("java.exe")) {
+            resolve(javaPath);
+          } else {
+            resolve(null);
+          }
+        });
+      } else {
+        // В Linux/Mac используем which java
+        exec("which java", (error, stdout) => {
+          if (error) {
+            resolve(null);
+            return;
+          }
+
+          const javaPath = stdout.trim();
+          if (javaPath) {
+            resolve(javaPath);
+          } else {
+            resolve(null);
+          }
+        });
+      }
+    });
   }
 
   /**
@@ -835,12 +1094,12 @@ class MinecraftLauncher {
 
     // ИСПРАВЛЕНИЕ ОШИБКИ ENAMETOOLONG: проверяем длину команды
     const commandLength = javaPath.length + allArgs.join(" ").length;
-    if (commandLength > 8000) {
+    /*if (commandLength > 8000) {
       // Максимальная длина команды в Windows ~8191 символов
       throw new Error(
         "Команда запуска слишком длинная. Попробуйте переместить лаунчер ближе к корню диска."
       );
-    }
+    }*/
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
@@ -996,8 +1255,8 @@ ipcMain.handle("check-java", async () => {
     const javaInfo = await launcher.ensureJavaAvailable();
     console.log("📋 Результат ensureJavaAvailable:", javaInfo);
 
-    // ИСПРАВЛЯЕМ ЛОГИКУ ПРОВЕРКИ
-    if (javaInfo.available && javaInfo.compatible) {
+    // ИСПРАВЛЕНИЕ: проверяем правильные поля
+    if (javaInfo.available === true && javaInfo.compatible === true) {
       console.log("✅ Java проверка успешна");
       return { success: true, java: javaInfo };
     } else {
@@ -1059,10 +1318,45 @@ ipcMain.handle("select-java-path", async () => {
   }
 });
 
+ipcMain.handle("save-username", async (event, username) => {
+  try {
+    launcher.config.last_username = username;
+    launcher.saveConfig();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("get-saved-username", async () => {
+  return launcher.config.last_username || "";
+});
+
+// Улучшенное сохранение Java пути (уже есть, но дополним)
 ipcMain.handle("save-java-path", async (event, javaPath) => {
-  launcher.config.java_path = javaPath;
-  launcher.saveConfig();
-  return { success: true };
+  try {
+    launcher.config.java_path = javaPath;
+    launcher.saveConfig();
+    console.log(`💾 Сохранен путь Java: ${javaPath}`);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Сохранение выбранного модпака
+ipcMain.handle("save-selected-modpack", async (event, modpackId) => {
+  try {
+    launcher.config.last_selected_modpack = modpackId;
+    launcher.saveConfig();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("get-last-selected-modpack", async () => {
+  return launcher.config.last_selected_modpack || null;
 });
 
 ipcMain.handle("get-saved-java-path", async () => {

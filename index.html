@@ -315,7 +315,13 @@
       }
 
       .hidden {
-        display: none;
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+      }
+
+      .java-modal.hidden {
+        display: none !important;
       }
 
       /* Java установка модал */
@@ -385,7 +391,7 @@
         <!-- ДОБАВИТЬ после формы с никнеймом: -->
         <div class="form-group">
           <label for="javaPath">☕ Путь к Java (необязательно)</label>
-          <div style="display: flex; gap: 10px">
+          <div style="display: flex; gap: 10px; margin-bottom: 10px">
             <input
               type="text"
               id="javaPath"
@@ -403,6 +409,20 @@
               📂 Выбрать
             </button>
           </div>
+          <!-- НОВАЯ кнопка для скачивания Java -->
+          <button
+            type="button"
+            class="btn btn-download"
+            onclick="downloadJavaManually()"
+            style="
+              width: 100%;
+              padding: 10px;
+              font-size: 12px;
+              margin-bottom: 10px;
+            "
+          >
+            ⬇️ Скачать Java 21 автоматически
+          </button>
           <small
             style="
               color: #666;
@@ -411,7 +431,8 @@
               display: block;
             "
           >
-            Если не указан, Java будет найдена или скачана автоматически
+            Java будет найдена автоматически или вы можете выбрать/скачать её
+            вручную
           </small>
         </div>
         <div class="form-group">
@@ -505,6 +526,7 @@
         try {
           const result = await ipcRenderer.invoke("select-java-path");
           if (result.success && result.path) {
+            // Показываем выбранный путь в интерфейсе
             document.getElementById("javaPath").value = result.path;
             updateStatus(`☕ Выбрана Java: ${result.version}`, "success");
 
@@ -512,10 +534,17 @@
             await ipcRenderer.invoke("save-java-path", result.path);
             javaReady = true;
 
+            await loadModpacks();
+
             // Обновляем кнопки если выбран модпак
             if (selectedModpack) {
               updateSelectedModpack();
             }
+          } else {
+            updateStatus(
+              "⚠️ Java не выбрана. Выберите Java для продолжения.",
+              "warning"
+            );
           }
         } catch (error) {
           updateStatus("❌ Ошибка выбора Java: " + error.message, "error");
@@ -523,69 +552,66 @@
       }
 
       async function initialize() {
+        console.log("🚀 Запуск initialize()");
+
+        // Убеждаемся что модальное окно Java скрыто при запуске
+        const javaModal = document.getElementById("javaModal");
+        if (!javaModal.classList.contains("hidden")) {
+          console.log("⚠️ Java модал был виден при запуске - скрываем его");
+          javaModal.classList.add("hidden");
+        }
+
+        // Загружаем сохраненные настройки (никнейм и модпак)
+        const lastModpackId = await loadSavedSettings();
+
         updateStatus("🔍 Проверка Java...", "info");
 
         try {
-          // Загружаем сохраненный путь Java
-          const savedJavaPath = await ipcRenderer.invoke("get-saved-java-path");
-          if (savedJavaPath) {
-            document.getElementById("javaPath").value = savedJavaPath;
-            console.log(`Загружен сохраненный путь Java: ${savedJavaPath}`);
-          }
-
           const javaCheck = await ipcRenderer.invoke("check-java");
           console.log("Результат проверки Java:", javaCheck);
 
           if (javaCheck.success) {
             javaReady = true;
             console.log(`✅ Java готова: ${javaCheck.java.majorVersion}`);
+
+            // ИСПРАВЛЕНИЕ: показываем правильный путь в интерфейсе
+            const displayPath =
+              javaCheck.java.displayPath ||
+              javaCheck.java.path ||
+              "Системная Java";
+            document.getElementById("javaPath").value = displayPath;
+            console.log(`☕ Отображаем путь Java: ${displayPath}`);
+
             updateStatus(
               `☕ Java ${javaCheck.java.majorVersion} готова`,
               "success"
             );
             await loadModpacks();
-          } else {
-            console.log(`❌ Java не прошла проверку: ${javaCheck.error}`);
-            javaReady = false;
-            updateStatus("⚠️ Требуется установка Java", "warning");
 
-            // Показываем выбор только если Java действительно не найдена
-            const userWantsDownload = confirm(
-              `Java 17+ не найдена.\n\nОшибка: ${javaCheck.error}\n\nСкачать Java 21 автоматически?\n(Нажмите "Отмена" для ручного выбора)`
-            );
-
-            if (userWantsDownload) {
-              showJavaModal("Скачивание Java 21...");
-              try {
-                const downloadResult = await ipcRenderer.invoke(
-                  "download-java-manually"
-                );
-                if (downloadResult.success) {
-                  hideJavaModal();
-                  // Перепроверяем Java
-                  const retryCheck = await ipcRenderer.invoke("check-java");
-                  if (retryCheck.success) {
-                    javaReady = true;
-                    updateStatus(
-                      `☕ Java ${retryCheck.java.majorVersion} установлена`,
-                      "success"
-                    );
-                    await loadModpacks();
-                  }
-                } else {
-                  throw new Error(downloadResult.error);
-                }
-              } catch (error) {
-                hideJavaModal();
-                updateStatus(
-                  "❌ Ошибка скачивания Java: " + error.message,
-                  "error"
-                );
-                setTimeout(() => selectJavaPath(), 1000);
-              }
-            } else {
-              await selectJavaPath();
+            // Восстанавливаем выбранный модпак
+            if (lastModpackId) {
+              restoreSelectedModpack(lastModpackId);
             }
+
+            return;
+          }
+
+          console.log(`❌ Java не прошла проверку: ${javaCheck.error}`);
+          javaReady = false;
+
+          // Очищаем поле пути Java если проверка не прошла
+          document.getElementById("javaPath").value = "";
+
+          updateStatus(
+            "⚠️ Java 17+ не найдена. Выберите Java вручную или скачайте автоматически.",
+            "warning"
+          );
+
+          await loadModpacks();
+
+          // Восстанавливаем выбранный модпак даже без Java
+          if (lastModpackId) {
+            restoreSelectedModpack(lastModpackId);
           }
         } catch (error) {
           updateStatus("❌ Ошибка инициализации: " + error.message, "error");
@@ -593,12 +619,65 @@
         }
       }
 
+      async function downloadJavaManually() {
+        const confirmed = confirm(
+          "Скачать и установить Java 21 автоматически?\n\nЭто займет несколько минут."
+        );
+
+        if (!confirmed) {
+          return;
+        }
+
+        showJavaModal("Скачивание Java 21...");
+        updateStatus("📥 Скачивание Java...", "info");
+
+        try {
+          const downloadResult = await ipcRenderer.invoke(
+            "download-java-manually"
+          );
+          if (downloadResult.success) {
+            hideJavaModal();
+            // Перепроверяем Java
+            const retryCheck = await ipcRenderer.invoke("check-java");
+            if (retryCheck.success) {
+              javaReady = true;
+
+              // ИСПРАВЛЕНИЕ: показываем правильный путь установленной Java
+              const displayPath =
+                retryCheck.java.displayPath || retryCheck.java.path;
+              document.getElementById("javaPath").value = displayPath;
+
+              updateStatus(
+                `☕ Java ${retryCheck.java.majorVersion} установлена`,
+                "success"
+              );
+
+              // Обновляем кнопки если выбран модпак
+              if (selectedModpack) {
+                updateSelectedModpack();
+              }
+            } else {
+              throw new Error("Java установлена, но не прошла проверку");
+            }
+          } else {
+            throw new Error(downloadResult.error);
+          }
+        } catch (error) {
+          hideJavaModal();
+          updateStatus("❌ Ошибка скачивания Java: " + error.message, "error");
+        }
+      }
+
       function showJavaModal(text) {
+        console.trace("🔍 showJavaModal вызвана с текстом:", text);
+        console.log("📍 Стек вызовов выше показывает, КТО вызвал эту функцию");
+
         document.getElementById("javaModalText").textContent = text;
         document.getElementById("javaModal").classList.remove("hidden");
       }
 
       function hideJavaModal() {
+        console.log("❌ hideJavaModal вызвана");
         document.getElementById("javaModal").classList.add("hidden");
       }
 
@@ -654,6 +733,18 @@
         }
       }
 
+      // Функция восстановления выбранного модпака
+      function restoreSelectedModpack(modpackId) {
+        setTimeout(() => {
+          const modpackIndex = modpacks.findIndex((mp) => mp.id === modpackId);
+          if (modpackIndex !== -1) {
+            selectModpack(modpackIndex);
+            console.log(`🎯 Восстановлен модпак: ${modpackId}`);
+          }
+        }, 500); // Небольшая задержка чтобы модпаки успели загрузиться
+      }
+
+      // ОБНОВИТЕ функцию selectModpack - добавьте сохранение выбора:
       function selectModpack(index) {
         document.querySelectorAll(".modpack-item").forEach((item) => {
           item.classList.remove("selected");
@@ -663,7 +754,52 @@
           .querySelectorAll(".modpack-item")
           [index].classList.add("selected");
         selectedModpack = modpacks[index];
+
+        // НОВОЕ: Сохраняем выбор модпака
+        ipcRenderer
+          .invoke("save-selected-modpack", selectedModpack.id)
+          .catch(console.error);
+
         updateSelectedModpack();
+      }
+
+      async function loadSavedSettings() {
+        try {
+          // Загружаем никнейм
+          const savedUsername = await ipcRenderer.invoke("get-saved-username");
+          if (savedUsername) {
+            document.getElementById("username").value = savedUsername;
+            console.log(`📝 Загружен никнейм: ${savedUsername}`);
+          }
+
+          // НЕ загружаем путь к Java здесь - это будет делать initialize()
+          // после проверки Java, чтобы показать правильный displayPath
+
+          // Загружаем последний выбранный модпак
+          const lastModpack = await ipcRenderer.invoke(
+            "get-last-selected-modpack"
+          );
+          if (lastModpack) {
+            console.log(`📦 Последний модпак: ${lastModpack}`);
+            return lastModpack;
+          }
+        } catch (error) {
+          console.error("Ошибка загрузки настроек:", error);
+        }
+        return null;
+      }
+
+      // Функция сохранения никнейма
+      async function saveUsername() {
+        const username = document.getElementById("username").value.trim();
+        if (username) {
+          try {
+            await ipcRenderer.invoke("save-username", username);
+            console.log(`💾 Никнейм сохранен: ${username}`);
+          } catch (error) {
+            console.error("Ошибка сохранения никнейма:", error);
+          }
+        }
       }
 
       async function updateSelectedModpack() {
@@ -835,6 +971,23 @@
         document.getElementById(
           "javaProgressText"
         ).textContent = `${progress}%`;
+      });
+
+      // Добавьте обработчики событий для автосохранения никнейма:
+      document.addEventListener("DOMContentLoaded", function () {
+        // Сохраняем никнейм при каждом изменении (с задержкой)
+        let usernameTimeout;
+        document
+          .getElementById("username")
+          .addEventListener("input", function () {
+            clearTimeout(usernameTimeout);
+            usernameTimeout = setTimeout(saveUsername, 1000); // Сохраняем через 1 секунду после прекращения печати
+          });
+
+        // Также сохраняем при потере фокуса
+        document
+          .getElementById("username")
+          .addEventListener("blur", saveUsername);
       });
 
       // Инициализация
