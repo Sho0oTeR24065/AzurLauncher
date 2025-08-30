@@ -21,7 +21,7 @@ async function downloadMissingLibraries(
     // КРИТИЧЕСКИЕ БИБЛИОТЕКИ FORGE (ПРОВЕРЕННЫЕ)
     // =============================================
 
-    // ModLauncher - основа Forge (РАБОТАЕТ)
+    // ModLauncher - основа Forge (РАБОТАЕТ) - В ДАННОЙ ВЕРСИИ API УЖЕ ВСТРОЕНА
     {
       url: "https://maven.minecraftforge.net/cpw/mods/modlauncher/10.0.9/modlauncher-10.0.9.jar",
       path: path.join(
@@ -161,19 +161,6 @@ async function downloadMissingLibraries(
         "SpecialSource",
         "1.11.0",
         "SpecialSource-1.11.0.jar"
-      ),
-    },
-
-    // КРИТИЧНО: MLLoader API
-    {
-      url: "https://maven.minecraftforge.net/cpw/mods/modlauncher-api/10.0.1/modlauncher-api-10.0.1.jar",
-      path: path.join(
-        libsDir,
-        "cpw",
-        "mods",
-        "modlauncher-api",
-        "10.0.1",
-        "modlauncher-api-10.0.1.jar"
       ),
     },
 
