@@ -1015,19 +1015,23 @@ class MinecraftLauncher {
     }
   }
 
-  async downloadForgeClient(instancePath, modpack) {
+  async downloadForgeClient(instancePath, modpack, onProgress = null) {
     const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
     const forgeDir = path.join(instancePath, "versions", forgeVersion);
     const forgeJar = path.join(forgeDir, `${forgeVersion}.jar`);
 
-    if (await fs.pathExists(forgeJar)) return;
+    if (await fs.pathExists(forgeJar)) {
+      if (onProgress) onProgress(100);
+      return;
+    }
 
     await fs.ensureDir(forgeDir);
 
-    // URL для Forge 1.20.1-47.3.33
     const forgeUrl = `https://maven.minecraftforge.net/net/minecraftforge/forge/${modpack.minecraft_version}-${modpack.forge_version}/forge-${modpack.minecraft_version}-${modpack.forge_version}-client.jar`;
 
-    await this.downloadFile(forgeUrl, forgeJar, null);
+    await this.downloadFile(forgeUrl, forgeJar, (progress) => {
+      if (onProgress) onProgress(progress);
+    });
 
     // Создаем JSON профиль для Forge
     const forgeProfile = {
@@ -1042,6 +1046,8 @@ class MinecraftLauncher {
       path.join(forgeDir, `${forgeVersion}.json`),
       JSON.stringify(forgeProfile, null, 2)
     );
+
+    if (onProgress) onProgress(100);
   }
 
   async getYandexDirectLink(shareUrl) {
@@ -1576,7 +1582,7 @@ class MinecraftLauncher {
     return minecraft;
   }
 
-  async downloadMissingLibraries(instancePath, modpack) {
+  async downloadMissingLibraries(instancePath, modpack, onProgress = null) {
     const libsDir = path.join(instancePath, "libraries");
     await fs.ensureDir(libsDir);
 
@@ -2155,7 +2161,7 @@ class MinecraftLauncher {
     console.log("Скачивание библиотек завершено");
   }
 
-  async downloadMinecraftAssets(instancePath, mcVersion) {
+  async downloadMinecraftAssets(instancePath, mcVersion, onProgress = null) {
     const assetsDir = path.join(instancePath, "assets");
     const indexesDir = path.join(assetsDir, "indexes");
     const objectsDir = path.join(assetsDir, "objects");
@@ -2173,6 +2179,8 @@ class MinecraftLauncher {
     try {
       await this.downloadFile(assetIndexUrl, assetIndexPath, null);
       console.log(`✅ Скачан asset index для ${mcVersion}`);
+
+      if (onProgress) onProgress(20); // Индекс скачан
 
       // Читаем asset index и скачиваем основные ассеты
       const assetIndex = JSON.parse(await fs.readFile(assetIndexPath, "utf8"));
@@ -2216,14 +2224,22 @@ class MinecraftLauncher {
               `❌ Ошибка скачивания ассета ${assetName}: ${error.message}`
             );
           }
+          downloaded++;
+        }
+        if (onProgress) {
+          const progress =
+            20 + Math.round((downloaded / criticalAssets.length) * 80);
+          onProgress(progress);
         }
       }
 
       console.log(`✅ Скачано ${downloaded} ассетов`);
+      if (onProgress) onProgress(100);
     } catch (error) {
       console.log(`❌ Ошибка скачивания ассетов: ${error.message}`);
       // Создаем минимальный asset index если скачивание не удалось
       await this.createMinimalAssetIndex(assetIndexPath);
+      if (onProgress) onProgress(100);
     }
   }
 
@@ -2245,7 +2261,7 @@ class MinecraftLauncher {
     console.log("Создан минимальный asset index");
   }
 
-  async downloadNativeLibraries(instancePath) {
+  async downloadNativeLibraries(instancePath, onProgress = null) {
     const platform = os.platform();
     const arch = os.arch();
 
@@ -2372,9 +2388,13 @@ class MinecraftLauncher {
         await this.extractNativesToDir(lib.path, nativesDir);
         console.log(`✅ Нативы извлечены: ${path.basename(lib.path)}`);
       }
+      if (onProgress) {
+        onProgress(Math.round(((i + 1) / nativeLibs.length) * 100));
+      }
     }
 
     console.log("Скачивание нативных библиотек завершено");
+    if (onProgress) onProgress(100);
   }
 
   // Функция для извлечения нативных файлов из JAR
@@ -2689,8 +2709,8 @@ ipcMain.handle("check-modpack-installed", async (event, modpackId) => {
 
 ipcMain.handle("download-modpack", async (event, modpack) => {
   try {
-    await launcher.downloadModpack(modpack, (progress) => {
-      event.sender.send("download-progress", progress);
+    await launcher.downloadModpack(modpack, (progress, stage) => {
+      event.sender.send("download-progress", progress, stage);
     });
     return { success: true };
   } catch (error) {
