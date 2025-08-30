@@ -738,6 +738,7 @@ class MinecraftLauncher {
       }
     }
   }
+
   /**
    * Получает оптимизированные JVM аргументы для современных версий MC
    */
@@ -757,15 +758,32 @@ class MinecraftLauncher {
       "-Dlog4j2.formatMsgNoLookups=true",
       "-Dfml.earlyprogresswindow=false",
 
-      // ДОБАВЬТЕ ЭТИ СТРОКИ для offline режима:
+      // ИСПРАВЛЕННЫЕ offline аргументы для устранения ошибки авторизации:
       "-Dcom.mojang.eula.agree=true",
       "-Dminecraft.api.auth.host=",
       "-Dminecraft.api.account.host=",
       "-Dminecraft.api.session.host=",
       "-Dminecraft.api.services.host=",
+
+      // ДОБАВЛЯЕМ эти критически важные параметры:
+      "-Dminecraft.api.env=local",
+      "-Dyggdrasil.agents.minecraft=",
+      "-Dyggdrasil.agents.realms=",
+      "-Dminecraft.api.auth.username=",
+      "-Dminecraft.api.auth.uuid=",
+      "-Dminecraft.api.auth.accessToken=",
+
+      // Отключаем проверки аутентификации
+      "-Dminecraft.launcher.brand=azurael",
+      "-Dminecraft.launcher.version=offline",
+      "-Djava.net.preferIPv4Stack=true",
+
+      // Дополнительные параметры для стабильности
+      "-Dfml.ignoreInvalidMinecraftCertificates=true",
+      "-Dfml.ignorePatchDiscrepancies=true",
     ];
 
-    // Остальной код функции остается без изменений...
+    // Java модули (остается без изменений)
     if (javaMainVersion >= 17) {
       args.push(
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
@@ -798,14 +816,7 @@ class MinecraftLauncher {
       );
     }
 
-    args.push(
-      `-Dminecraft.launcher.brand=${this.config.launcher_name.replace(
-        /\s/g,
-        "_"
-      )}`,
-      "-Dminecraft.launcher.version=1.0.0"
-    );
-
+    // Кодировка для Windows
     if (os.platform() === "win32") {
       args.push("-Dfile.encoding=UTF-8");
     }
@@ -1083,12 +1094,133 @@ class MinecraftLauncher {
     }
   }
 
+  /**
+   * Получает оптимизированные JVM аргументы для современных версий MC
+   */
+  getJVMArgs(modpack, javaVersion) {
+    const javaMainVersion = parseInt(javaVersion);
+    const modloader = modpack.modloader.toLowerCase();
+
+    let args = [
+      `-Xmx${modpack.memory}`,
+      "-Xms1G",
+      "-XX:+UseG1GC",
+      "-XX:+UnlockExperimentalVMOptions",
+      "-XX:G1NewSizePercent=20",
+      "-XX:G1ReservePercent=20",
+      "-XX:MaxGCPauseMillis=50",
+      "-XX:G1HeapRegionSize=32M",
+      "-Dlog4j2.formatMsgNoLookups=true",
+      "-Dfml.earlyprogresswindow=false",
+
+      // ИСПРАВЛЕННЫЕ offline аргументы для устранения ошибки авторизации:
+      "-Dcom.mojang.eula.agree=true",
+      "-Dminecraft.api.auth.host=",
+      "-Dminecraft.api.account.host=",
+      "-Dminecraft.api.session.host=",
+      "-Dminecraft.api.services.host=",
+
+      // ДОБАВЛЯЕМ эти критически важные параметры:
+      "-Dminecraft.api.env=local",
+      "-Dyggdrasil.agents.minecraft=",
+      "-Dyggdrasil.agents.realms=",
+      "-Dminecraft.api.auth.username=",
+      "-Dminecraft.api.auth.uuid=",
+      "-Dminecraft.api.auth.accessToken=",
+
+      // Отключаем проверки аутентификации
+      "-Dminecraft.launcher.brand=azurael",
+      "-Dminecraft.launcher.version=offline",
+      "-Djava.net.preferIPv4Stack=true",
+
+      // Дополнительные параметры для стабильности
+      "-Dfml.ignoreInvalidMinecraftCertificates=true",
+      "-Dfml.ignorePatchDiscrepancies=true",
+    ];
+
+    // Java модули (остается без изменений)
+    if (javaMainVersion >= 17) {
+      args.push(
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
+      );
+
+      if (modloader === "forge" || modloader === "neoforge") {
+        args.push(
+          "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
+          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
+          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.module=ALL-UNNAMED"
+        );
+      }
+    }
+
+    if (javaMainVersion >= 21) {
+      args.push(
+        "-XX:+EnableDynamicAgentLoading",
+        "--add-opens=java.base/java.text=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.regex=ALL-UNNAMED"
+      );
+    }
+
+    // Кодировка для Windows
+    if (os.platform() === "win32") {
+      args.push("-Dfile.encoding=UTF-8");
+    }
+
+    return args;
+  }
+
+  /**
+   * Дополнительная функция для создания конфигурации offline режима
+   */
+  async setupOfflineMode(instancePath) {
+    // Создаем конфигурацию для authlib offline режима
+    const configDir = path.join(instancePath, "config");
+    await fs.ensureDir(configDir);
+
+    // Создаем файл конфигурации authlib
+    const authlibConfig = {
+      "feature.non_email_login": true,
+      "feature.no_chat_reports": true,
+      yggdrasil: {
+        authHost: "",
+        accountsHost: "",
+        sessionHost: "",
+        servicesHost: "",
+        name: "offline",
+      },
+    };
+
+    const authlibConfigPath = path.join(configDir, "authlib-injector.json");
+    await fs.writeFile(
+      authlibConfigPath,
+      JSON.stringify(authlibConfig, null, 2)
+    );
+
+    console.log("✅ Создана конфигурация offline режима");
+  }
+
+  /**
+   * Обновленная функция запуска с дополнительной настройкой offline режима
+   */
   async launchMinecraft(username, modpack, customMemoryGB) {
     const instancePath = path.join(this.instancesDir, modpack.id);
 
     if (!fs.existsSync(instancePath)) {
       throw new Error("Модпак не установлен");
     }
+
+    // ДОБАВЛЯЕМ настройку offline режима
+    await this.setupOfflineMode(instancePath);
 
     // Убеждаемся что Java доступна
     const javaInfo = await this.ensureJavaAvailable();
@@ -1110,20 +1242,32 @@ class MinecraftLauncher {
     // Скачиваем нативные LWJGL библиотеки
     await this.downloadNativeLibraries(instancePath);
 
-    // ДОБАВЬТЕ ЭТУ СТРОКУ - скачиваем ассеты Minecraft
-    await this.downloadMinecraftAssets(instancePath, modpack.minecraft_version);
+    // Скачиваем ассеты Minecraft
+    await this.downloadMinecraftAssets(instancePath, modpack);
 
     const classpath = await this.buildClasspath(instancePath, modpack);
 
-    jvmArgs.push(
+    // УЛУЧШЕННЫЕ JVM аргументы с дополнительными параметрами offline режима
+    const finalJvmArgs = [
+      ...jvmArgs,
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
+
+      // Дополнительные параметры для исправления ошибки publickeys
+      "-Dauthlibinjector.side=client",
+      "-Dauthlibinjector.mojang.antifeatures=true",
+      "-Dmojang.api.base=",
+      "-Dmojang.api.status=",
+      "-Dmojang.sessionserver=",
+      "-Dmojang.authserver=",
+
       "-cp",
       classpath,
-      this.getMainClass(modpack)
-    );
+      this.getMainClass(modpack),
+    ];
 
-    // Остальной код остается без изменений...
     const shortInstancePath = path.relative(process.cwd(), instancePath);
+
+    // ИСПРАВЛЕННЫЕ game аргументы
     const gameArgs = [
       "--username",
       username,
@@ -1138,19 +1282,33 @@ class MinecraftLauncher {
       "--assetIndex",
       modpack.minecraft_version,
       "--uuid",
-      this.generateUUID(),
+      this.generateOfflineUUID(username),
       "--accessToken",
-      "0",
+      "null", // Используем null вместо offline
       "--userType",
-      "legacy",
+      "msa",
+      "--userProperties",
+      "{}",
+      "--demo",
+      "false",
     ];
 
-    const allArgs = [...jvmArgs, ...gameArgs];
+    const allArgs = [...finalJvmArgs, ...gameArgs];
+
+    console.log(
+      "🚀 Запускаем Minecraft с исправленными параметрами offline режима"
+    );
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
-      stdio: "inherit",
+      stdio: ["ignore", "inherit", "inherit"], // Более безопасная настройка stdio
       detached: false,
+      env: {
+        ...process.env,
+        MC_LAUNCHER_BRAND: "azurael",
+        MC_LAUNCHER_VERSION: "offline",
+        JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
+      },
     });
 
     minecraft.on("error", (error) => {
