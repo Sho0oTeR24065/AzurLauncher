@@ -952,7 +952,7 @@ class MinecraftLauncher {
    */
   getMainClass(modpack) {
     if (modpack.modloader === "forge") {
-      return "cpw.mods.bootstraplauncher.BootstrapLauncher";
+      return "cpw.mods.modlauncher.Launcher";
     }
     return "net.minecraft.client.main.Main";
   }
@@ -1061,7 +1061,7 @@ class MinecraftLauncher {
         type: "release",
         time: new Date().toISOString(),
         releaseTime: new Date().toISOString(),
-        mainClass: "cpw.mods.bootstraplauncher.BootstrapLauncher",
+        mainClass: "cpw.mods.modlauncher.Launcher",
         arguments: {
           jvm: [
             "-DforgeLoadingContext=true",
@@ -1698,12 +1698,40 @@ class MinecraftLauncher {
     const finalJvmArgs = [
       ...jvmArgs,
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
+
+      // Отключаем все проверки аутентификации
+      "-Dcom.mojang.authlib.GameProfile.authHost=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.GameProfile.accountsHost=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.GameProfile.sessionHost=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.GameProfile.servicesHost=http://127.0.0.1:25565",
+
+      // Блокируем Yggdrasil
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_BASE_URL=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SESSION_HOST=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SERVICES_HOST=http://127.0.0.1:25565",
+
       "-Djava.net.preferIPv4Stack=true",
+      "-Dcom.mojang.authlib.properties.name=offline",
       "-Dminecraft.launcher.brand=minecraft-launcher",
       "-Dminecraft.launcher.version=2.1.184",
+
+      // ДОБАВЛЯЕМ критически важные свойства для ModLauncher и FMLLoader
+      "-DforgeLoadingContext=true",
+      `-Dfml.forgeVersion=${modpack.forge_version}`,
+      `-Dfml.mcVersion=${modpack.minecraft_version}`,
+      "-Dfml.majorVersion=47",
+
+      // КРИТИЧНО: указываем ModLauncher что запускать
+      "-DmodLauncher.gameDir=" + instancePath,
+      "-DignoreList=bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client,fmlcore,javafmlmod,lowcodelanguage,mixin,forge",
+
+      // Для правильной работы FMLLoader
+      "-Dnet.minecraftforge.fml.loading.moddiscovery.modsFolder=" +
+        path.join(instancePath, "mods"),
+
       "-cp",
       classpath,
-      "cpw.mods.bootstraplauncher.BootstrapLauncher", // <--- КРИТИЧНО!
+      this.getMainClass(modpack),
     ];
 
     // ИСПРАВЛЕННЫЕ game аргументы
@@ -1721,20 +1749,13 @@ class MinecraftLauncher {
       "--uuid",
       this.generateOfflineUUID(username),
       "--accessToken",
-      "❄❄❄❄❄❄❄❄",
+      "❄❄❄❄❄❄❄❄", // Используем символы вместо null
       "--userType",
       "legacy",
 
+      // ДОБАВЛЯЕМ специфичные для Forge аргументы
       "--launchTarget",
       "forgeclient",
-      "--fml.forgeVersion",
-      modpack.forge_version,
-      "--fml.mcVersion",
-      modpack.minecraft_version,
-      "--fml.forgeGroup",
-      "net.minecraftforge",
-      "--fml.mcpVersion",
-      "20230612.114412",
     ];
 
     const allArgs = [...finalJvmArgs, ...gameArgs];
