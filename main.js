@@ -1416,15 +1416,20 @@ class MinecraftLauncher {
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
 
       // КРИТИЧНО: отключаем все проверки аутентификации на уровне JVM
-      "-Dminecraft.api.auth.host=127.0.0.1",
-      "-Dminecraft.api.account.host=127.0.0.1",
-      "-Dminecraft.api.session.host=127.0.0.1",
-      "-Dminecraft.api.services.host=127.0.0.1",
+      "-Dcom.mojang.authlib.GameProfile.authHost=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.GameProfile.accountsHost=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.GameProfile.sessionHost=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.GameProfile.servicesHost=http://127.0.0.1:25565",
 
       // Блокируем попытки подключения к authlib
       "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_BASE_URL=http://127.0.0.1:25585",
       "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SESSION_HOST=http://127.0.0.1:25585",
       "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SERVICES_HOST=http://127.0.0.1:25585",
+
+      "-Djava.net.preferIPv4Stack=true",
+      "-Dcom.mojang.authlib.properties.name=offline",
+      "-Dminecraft.launcher.brand=minecraft-launcher",
+      "-Dminecraft.launcher.version=2.1.184",
 
       "-cp",
       classpath,
@@ -1468,6 +1473,8 @@ class MinecraftLauncher {
         MC_LAUNCHER_BRAND: "azurael",
         MC_LAUNCHER_VERSION: "offline",
         JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
+        // ДОБАВИТЬ:
+        AUTHLIB_OFFLINE: "true",
       },
     });
 
