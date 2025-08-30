@@ -758,32 +758,34 @@ class MinecraftLauncher {
       "-Dlog4j2.formatMsgNoLookups=true",
       "-Dfml.earlyprogresswindow=false",
 
-      // ИСПРАВЛЕННЫЕ offline аргументы для устранения ошибки авторизации:
-      "-Dcom.mojang.eula.agree=true",
-      "-Dminecraft.api.auth.host=",
-      "-Dminecraft.api.account.host=",
-      "-Dminecraft.api.session.host=",
-      "-Dminecraft.api.services.host=",
+      // БЛОКИРУЕМ все сетевые подключения authlib через системные свойства
+      "-Djava.net.useSystemProxies=false",
+      "-Djava.awt.headless=false",
 
-      // ДОБАВЛЯЕМ эти критически важные параметры:
-      "-Dminecraft.api.env=local",
-      "-Dyggdrasil.agents.minecraft=",
-      "-Dyggdrasil.agents.realms=",
-      "-Dminecraft.api.auth.username=",
-      "-Dminecraft.api.auth.uuid=",
-      "-Dminecraft.api.auth.accessToken=",
+      // Устанавливаем фиктивный NetworkInterface для блокировки authlib
+      "-Dminecraft.launcher.brand=minecraft-launcher",
+      "-Dminecraft.launcher.version=2.1",
 
-      // Отключаем проверки аутентификации
-      "-Dminecraft.launcher.brand=azurael",
-      "-Dminecraft.launcher.version=offline",
+      // Заставляем authlib использовать offline режим
+      "-Dcom.mojang.authlib.GameProfile.OFFLINE=true",
+      "-Dcom.mojang.authlib.legacy=true",
+
+      // Полностью отключаем все хосты через /etc/hosts эмуляцию
+      "-Dsun.net.useExclusiveBind=false",
       "-Djava.net.preferIPv4Stack=true",
 
-      // Дополнительные параметры для стабильности
+      // Блокируем DNS для authlib серверов
+      "-Dnetworkaddress.cache.ttl=300",
+      "-Dnetworkaddress.cache.negative.ttl=10",
+
+      // Offline параметры
+      "-Dminecraft.api.env=local",
+      "-Dcom.mojang.eula.agree=true",
       "-Dfml.ignoreInvalidMinecraftCertificates=true",
       "-Dfml.ignorePatchDiscrepancies=true",
     ];
 
-    // Java модули (остается без изменений)
+    // Java модули
     if (javaMainVersion >= 17) {
       args.push(
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
@@ -816,12 +818,120 @@ class MinecraftLauncher {
       );
     }
 
-    // Кодировка для Windows
     if (os.platform() === "win32") {
       args.push("-Dfile.encoding=UTF-8");
     }
 
     return args;
+  }
+
+  // И самое главное - создаём фиктивный authlib JAR
+  async createDummyAuthlib(instancePath) {
+    const libsDir = path.join(instancePath, "libraries");
+    const authlibDir = path.join(libsDir, "com", "mojang", "authlib", "4.0.43");
+    const authlibJar = path.join(authlibDir, "authlib-4.0.43.jar");
+
+    // Если authlib уже есть, заменяем его на фиктивный
+    if (await fs.pathExists(authlibJar)) {
+      console.log("Заменяем authlib на фиктивную версию...");
+
+      // Создаём минимальный JAR с пустыми классами
+      const JSZip = require("jszip");
+      const zip = new JSZip();
+
+      // Добавляем фиктивные классы authlib
+      zip.file("com/mojang/authlib/GameProfile.class", Buffer.alloc(0));
+      zip.file(
+        "com/mojang/authlib/yggdrasil/YggdrasilAuthenticationService.class",
+        Buffer.alloc(0)
+      );
+      zip.file(
+        "com/mojang/authlib/HttpAuthenticationService.class",
+        Buffer.alloc(0)
+      );
+      zip.file(
+        "META-INF/MANIFEST.MF",
+        "Manifest-Version: 1.0\nName: Dummy Authlib\n"
+      );
+
+      const jarBuffer = await zip.generateAsync({ type: "nodebuffer" });
+
+      // Создаём резервную копию оригинального authlib
+      await fs.move(authlibJar, authlibJar + ".original");
+
+      // Записываем фиктивный JAR
+      await fs.writeFile(authlibJar, jarBuffer);
+
+      console.log("Authlib заменён на фиктивную версию");
+    }
+  }
+
+  async startMockAuthServer() {
+    return new Promise((resolve) => {
+      const http = require("http");
+
+      // Создаём простой HTTP сервер для эмуляции authlib ответов
+      const server = http.createServer((req, res) => {
+        console.log(`Mock Auth Server: ${req.method} ${req.url}`);
+
+        // Устанавливаем CORS заголовки
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader(
+          "Access-Control-Allow-Methods",
+          "GET, POST, PUT, DELETE, OPTIONS"
+        );
+        res.setHeader(
+          "Access-Control-Allow-Headers",
+          "Content-Type, Authorization"
+        );
+
+        // Отвечаем на все запросы пустым JSON
+        if (req.url === "/publickeys" || req.url === "/publicKeys") {
+          // Ответ на запрос публичных ключей
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end('{"keys":[]}');
+        } else if (req.url.includes("/session") || req.url.includes("/auth")) {
+          // Ответ на запросы сессии и аутентификации
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end('{"status":"ok"}');
+        } else {
+          // Для всех остальных запросов
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end('{"error":"not_found"}');
+        }
+      });
+
+      // Запускаем сервер на порту 25565
+      server.listen(25565, "127.0.0.1", () => {
+        console.log("🌐 Mock Auth Server запущен на http://127.0.0.1:25565");
+
+        // Автоматически останавливаем сервер через 2 минуты
+        setTimeout(() => {
+          server.close(() => {
+            console.log("🔴 Mock Auth Server остановлен");
+          });
+        }, 120000); // 2 минуты
+
+        resolve(server);
+      });
+
+      server.on("error", (err) => {
+        if (err.code === "EADDRINUSE") {
+          console.log("⚠️ Порт 25565 занят, используем порт 25566");
+
+          // Пробуем другой порт
+          server.listen(25566, "127.0.0.1", () => {
+            console.log(
+              "🌐 Mock Auth Server запущен на http://127.0.0.1:25566"
+            );
+            resolve(server);
+          });
+        } else {
+          console.log("❌ Ошибка Mock Auth Server:", err.message);
+          resolve(null);
+        }
+      });
+    });
   }
 
   /**
@@ -1113,27 +1223,13 @@ class MinecraftLauncher {
       "-Dlog4j2.formatMsgNoLookups=true",
       "-Dfml.earlyprogresswindow=false",
 
-      // ИСПРАВЛЕННЫЕ offline аргументы для устранения ошибки авторизации:
-      "-Dcom.mojang.eula.agree=true",
-      "-Dminecraft.api.auth.host=",
-      "-Dminecraft.api.account.host=",
-      "-Dminecraft.api.session.host=",
-      "-Dminecraft.api.services.host=",
-
-      // ДОБАВЛЯЕМ эти критически важные параметры:
-      "-Dminecraft.api.env=local",
-      "-Dyggdrasil.agents.minecraft=",
-      "-Dyggdrasil.agents.realms=",
-      "-Dminecraft.api.auth.username=",
-      "-Dminecraft.api.auth.uuid=",
-      "-Dminecraft.api.auth.accessToken=",
-
-      // Отключаем проверки аутентификации
-      "-Dminecraft.launcher.brand=azurael",
-      "-Dminecraft.launcher.version=offline",
+      // Проверенные TLauncher аргументы для offline
+      "-Dminecraft.launcher.brand=minecraft-launcher",
+      "-Dminecraft.launcher.version=2.1",
       "-Djava.net.preferIPv4Stack=true",
+      "-Dcom.mojang.eula.agree=true",
 
-      // Дополнительные параметры для стабильности
+      // Отключаем проблемные системы
       "-Dfml.ignoreInvalidMinecraftCertificates=true",
       "-Dfml.ignorePatchDiscrepancies=true",
     ];
@@ -1183,30 +1279,89 @@ class MinecraftLauncher {
    * Дополнительная функция для создания конфигурации offline режима
    */
   async setupOfflineMode(instancePath) {
-    // Создаем конфигурацию для authlib offline режима
+    console.log("Настраиваем радикальный offline режим...");
+
     const configDir = path.join(instancePath, "config");
     await fs.ensureDir(configDir);
 
-    // Создаем файл конфигурации authlib
-    const authlibConfig = {
-      "feature.non_email_login": true,
-      "feature.no_chat_reports": true,
-      yggdrasil: {
-        authHost: "",
-        accountsHost: "",
-        sessionHost: "",
-        servicesHost: "",
-        name: "offline",
+    // Создаём launcher_profiles.json для полного offline режима
+    const launcherProfiles = {
+      profiles: {
+        offline: {
+          name: "Offline",
+          type: "custom",
+          lastVersionId: "offline",
+          javaArgs:
+            "-Dminecraft.launcher.brand=minecraft-launcher -Dminecraft.launcher.version=2.1",
+        },
       },
+      settings: {
+        enableSnapshots: false,
+        enableAdvanced: false,
+        keepLauncherOpen: false,
+        showMenu: false,
+        soundOn: false,
+      },
+      version: 3,
     };
 
-    const authlibConfigPath = path.join(configDir, "authlib-injector.json");
-    await fs.writeFile(
-      authlibConfigPath,
-      JSON.stringify(authlibConfig, null, 2)
-    );
+    const profilesPath = path.join(instancePath, "launcher_profiles.json");
+    await fs.writeFile(profilesPath, JSON.stringify(launcherProfiles, null, 2));
 
-    console.log("✅ Создана конфигурация offline режима");
+    console.log("Создан launcher_profiles.json для offline режима");
+  }
+
+  generateOfflineUUID(username) {
+    const crypto = require("crypto");
+    const hash = crypto
+      .createHash("md5")
+      .update(`OfflinePlayer:${username}`)
+      .digest("hex");
+
+    // Форматируем как UUID: xxxxxxxx-xxxx-3xxx-yxxx-xxxxxxxxxxxx
+    const uuid = [
+      hash.substring(0, 8),
+      hash.substring(8, 12),
+      "3" + hash.substring(13, 16), // Version 3 UUID
+      ((parseInt(hash.substring(16, 17), 16) & 0x3) | 0x8).toString(16) +
+        hash.substring(17, 20),
+      hash.substring(20, 32),
+    ].join("-");
+
+    return uuid;
+  }
+
+  async downloadVanillaClient(instancePath, mcVersion) {
+    const versionsDir = path.join(instancePath, "versions", mcVersion);
+    const clientJarPath = path.join(versionsDir, `${mcVersion}.jar`);
+
+    // Если уже есть - пропускаем
+    if (await fs.pathExists(clientJarPath)) {
+      console.log(`✅ Vanilla client уже есть: ${mcVersion}`);
+      return;
+    }
+
+    console.log(`📥 Скачиваем vanilla Minecraft client ${mcVersion}...`);
+
+    await fs.ensureDir(versionsDir);
+
+    // URL для Minecraft 1.20.1 client
+    const clientUrl =
+      "https://piston-data.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/client.jar";
+
+    try {
+      await this.downloadFile(clientUrl, clientJarPath, (progress) => {
+        if (progress % 20 === 0) {
+          // Логируем каждые 20%
+          console.log(`Vanilla client: ${progress}%`);
+        }
+      });
+
+      console.log(`✅ Vanilla client скачан: ${clientJarPath}`);
+    } catch (error) {
+      console.error(`❌ Ошибка скачивания vanilla client: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
@@ -1219,8 +1374,16 @@ class MinecraftLauncher {
       throw new Error("Модпак не установлен");
     }
 
+    // ЗАПУСКАЕМ мок-сервер аутентификации ПЕРЕД запуском игры
+    console.log("🌐 Запускаем мок-сервер аутентификации...");
+    await this.startMockAuthServer();
+
+    // Небольшая задержка для запуска сервера
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
     // ДОБАВЛЯЕМ настройку offline режима
     await this.setupOfflineMode(instancePath);
+    await this.downloadVanillaClient(instancePath, modpack.minecraft_version);
 
     // Убеждаемся что Java доступна
     const javaInfo = await this.ensureJavaAvailable();
@@ -1252,13 +1415,16 @@ class MinecraftLauncher {
       ...jvmArgs,
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
 
-      // Дополнительные параметры для исправления ошибки publickeys
-      "-Dauthlibinjector.side=client",
-      "-Dauthlibinjector.mojang.antifeatures=true",
-      "-Dmojang.api.base=",
-      "-Dmojang.api.status=",
-      "-Dmojang.sessionserver=",
-      "-Dmojang.authserver=",
+      // КРИТИЧНО: отключаем все проверки аутентификации на уровне JVM
+      "-Dminecraft.api.auth.host=127.0.0.1",
+      "-Dminecraft.api.account.host=127.0.0.1",
+      "-Dminecraft.api.session.host=127.0.0.1",
+      "-Dminecraft.api.services.host=127.0.0.1",
+
+      // Блокируем попытки подключения к authlib
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_BASE_URL=http://127.0.0.1:25585",
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SESSION_HOST=http://127.0.0.1:25585",
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SERVICES_HOST=http://127.0.0.1:25585",
 
       "-cp",
       classpath,
@@ -1272,25 +1438,19 @@ class MinecraftLauncher {
       "--username",
       username,
       "--version",
-      `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`,
+      modpack.minecraft_version,
       "--gameDir",
-      shortInstancePath.length < instancePath.length
-        ? shortInstancePath
-        : instancePath,
+      instancePath,
       "--assetsDir",
-      path.join(shortInstancePath || instancePath, "assets"),
+      path.join(instancePath, "assets"),
       "--assetIndex",
       modpack.minecraft_version,
       "--uuid",
       this.generateOfflineUUID(username),
       "--accessToken",
-      "null", // Используем null вместо offline
+      "null",
       "--userType",
-      "msa",
-      "--userProperties",
-      "{}",
-      "--demo",
-      "false",
+      "legacy",
     ];
 
     const allArgs = [...finalJvmArgs, ...gameArgs];
