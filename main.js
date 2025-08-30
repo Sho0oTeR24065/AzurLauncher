@@ -746,7 +746,6 @@ class MinecraftLauncher {
 
   getJVMArgs(modpack, javaVersion) {
     const javaMainVersion = parseInt(javaVersion);
-    const modloader = modpack.modloader.toLowerCase();
 
     let args = [
       `-Xmx${modpack.memory}`,
@@ -758,77 +757,27 @@ class MinecraftLauncher {
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
       "-Dlog4j2.formatMsgNoLookups=true",
-      "-Dfml.earlyprogresswindow=false",
-
-      // КРИТИЧНО: указываем ModLauncher где искать сервисы
-      "-Dfml.forgeGroup=net.minecraftforge",
-      "-Dfml.mcpVersion=20230612.114412",
-      "-Dfml.forgeVersion=" + modpack.forge_version,
-      "-Dfml.mcVersion=" + modpack.minecraft_version,
-
-      // ДОБАВЛЯЕМ classpath для поиска сервисов
-      "-Dmodlauncher.locateservices=true",
-      "-Dmodlauncher.transformationservices=net.minecraftforge.fml.loading.FMLLoader",
-      "-Dmodlauncher.launchservices=net.minecraftforge.client.loading.ClientModLoader",
-
-      "-Dminecraft.launcher.brand=minecraft-launcher",
-      "-Dminecraft.launcher.version=2.1",
-      "-Djava.net.preferIPv4Stack=true",
-      "-Dcom.mojang.eula.agree=true",
-      "-Dfml.ignoreInvalidMinecraftCertificates=true",
-      "-Dfml.ignorePatchDiscrepancies=true",
     ];
 
-    // ИСПРАВЛЕННЫЕ Java модули для решения проблемы с ASM
+    // Модульные аргументы для Java 17+
     if (javaMainVersion >= 17) {
       args.push(
-        // Основные модули
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+        "--add-opens=java.base/java.text=ALL-UNNAMED",
         "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
-        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.regex=ALL-UNNAMED",
         "--add-opens=java.base/java.net=ALL-UNNAMED",
-        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
         "--add-opens=java.base/java.io=ALL-UNNAMED",
-        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-
-        // КРИТИЧНО: решение проблемы с ASM модулями
-        "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
-        "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
-
-        // НОВОЕ: исправляем конфликт с org.objectweb.asm
-        "--add-modules=ALL-SYSTEM",
-        "--add-reads=ALL-UNNAMED=ALL-SYSTEM",
-
-        // ОТКЛЮЧАЕМ проблемные модули которые конфликтуют с ASM
-        "--limit-modules=java.base,java.logging,java.xml,java.desktop,java.management,java.security.jgss,java.instrument,java.naming,java.prefs,java.sql,java.datatransfer,java.rmi",
-
-        // Явно разрешаем доступ к ASM классам
-        "--add-exports=java.base/jdk.internal.loader=ALL-UNNAMED"
+        "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED"
       );
-
-      if (modloader === "forge" || modloader === "neoforge") {
-        args.push(
-          "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
-          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
-          "--add-opens=java.base/java.lang.module=ALL-UNNAMED",
-
-          // ДОПОЛНИТЕЛЬНО для Forge
-          "--add-opens=java.base/java.text=ALL-UNNAMED",
-          "--add-opens=java.base/java.util.regex=ALL-UNNAMED"
-        );
-      }
     }
 
     if (javaMainVersion >= 21) {
       args.push("-XX:+EnableDynamicAgentLoading");
-    }
-
-    if (os.platform() === "win32") {
-      args.push("-Dfile.encoding=UTF-8");
     }
 
     return args;
@@ -998,11 +947,8 @@ class MinecraftLauncher {
    */
   getMainClass(modpack) {
     if (modpack.modloader === "forge") {
-      // ВАРИАНТ 1: Используем ModLauncher напрямую (обходим BootstrapLauncher)
-      return "cpw.mods.modlauncher.Launcher";
-
-      // ВАРИАНТ 2: Если не работает, раскомментируйте эту строку:
-      // return "cpw.mods.bootstraplauncher.BootstrapLauncher";
+      // ИСПОЛЬЗУЙТЕ BootstrapLauncher - он правильно настраивает ModLauncher
+      return "cpw.mods.bootstraplauncher.BootstrapLauncher";
     }
     return "net.minecraft.client.main.Main";
   }
@@ -1664,23 +1610,7 @@ class MinecraftLauncher {
       throw new Error("Модпак не установлен");
     }
 
-    console.log("🔍 Проверка целостности Forge...");
-    try {
-      await this.checkForgeIntegrity(instancePath, modpack);
-    } catch (error) {
-      console.error("❌ Ошибка целостности Forge:", error.message);
-      throw error;
-    }
-
-    // ЗАПУСКАЕМ мок-сервер аутентификации ПЕРЕД запуском игры
-    console.log("🌐 Запускаем мок-сервер аутентификации...");
-    await this.startMockAuthServer();
-
-    // Небольшая задержка для запуска сервера
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // ДОБАВЛЯЕМ настройку offline режима
-    await this.setupOfflineMode(instancePath);
+    await this.ensureForgeStructure(instancePath, modpack);
 
     // Убеждаемся что Java доступна
     const javaInfo = await this.ensureJavaAvailable();
@@ -1697,57 +1627,40 @@ class MinecraftLauncher {
       javaInfo.majorVersion
     );
 
-    // Очищаем старые конфликтующие библиотеки
-    await this.cleanupOldLibraries(instancePath);
-
-    await this.checkMissingLibraries(instancePath, modpack);
-
     console.log("🔧 Построение classpath...");
     const classpath = await this.buildClasspath(instancePath, modpack);
 
-    // Проверяем что classpath содержит необходимые компоненты
-    if (!classpath.includes("modlauncher")) {
-      throw new Error(
-        "ModLauncher отсутствует в classpath! Переустановите модпак."
-      );
-    }
+    // КРИТИЧЕСКИ ВАЖНО: системные свойства для BootstrapLauncher
+    const systemProps = [
+      `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
+      `-Dminecraft.client.jar=${path.join(
+        instancePath,
+        "versions",
+        modpack.minecraft_version,
+        `${modpack.minecraft_version}.jar`
+      )}`,
+      `-Dforge.client.jar=${path.join(
+        instancePath,
+        "versions",
+        `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`,
+        `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}.jar`
+      )}`,
+      `-DlegacyClassPath=${classpath}`,
+      `-DlibraryDirectory=${path.join(instancePath, "libraries")}`,
+      `-Dfml.forgeVersion=${modpack.forge_version}`,
+      `-Dfml.mcVersion=${modpack.minecraft_version}`,
+    ];
 
-    // УЛУЧШЕННЫЕ JVM аргументы
+    // Финальные JVM аргументы
     const finalJvmArgs = [
       ...jvmArgs,
-      `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
-
-      // Отключаем все проверки аутентификации
-      "-Dcom.mojang.authlib.GameProfile.authHost=http://127.0.0.1:25565",
-      "-Dcom.mojang.authlib.GameProfile.accountsHost=http://127.0.0.1:25565",
-      "-Dcom.mojang.authlib.GameProfile.sessionHost=http://127.0.0.1:25565",
-      "-Dcom.mojang.authlib.GameProfile.servicesHost=http://127.0.0.1:25565",
-
-      // Блокируем Yggdrasil
-      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_BASE_URL=http://127.0.0.1:25565",
-      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SESSION_HOST=http://127.0.0.1:25565",
-      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SERVICES_HOST=http://127.0.0.1:25565",
-
-      "-Djava.net.preferIPv4Stack=true",
-      "-Dcom.mojang.authlib.properties.name=offline",
-      "-Dminecraft.launcher.brand=minecraft-launcher",
-      "-Dminecraft.launcher.version=2.1.184",
-
-      // КРИТИЧНО: указываем ModLauncher что запускать
-      "-DmodLauncher.gameDir=" + instancePath,
-      "-DignoreList=bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client,fmlcore,javafmlmod,lowcodelanguage,mixin,forge",
-      "-Dfml.forgeGroup=net.minecraftforge",
-      "-Dfml.mcpVersion=20230612.114412",
-      // Для правильной работы FMLLoader
-      "-Dnet.minecraftforge.fml.loading.moddiscovery.modsFolder=" +
-        path.join(instancePath, "mods"),
-
+      ...systemProps,
       "-cp",
       classpath,
       this.getMainClass(modpack),
     ];
 
-    // ИСПРАВЛЕННЫЕ game аргументы
+    // Game аргументы для BootstrapLauncher (упрощенные)
     const gameArgs = [
       "--username",
       username,
@@ -1762,26 +1675,16 @@ class MinecraftLauncher {
       "--uuid",
       this.generateOfflineUUID(username),
       "--accessToken",
-      "❄❄❄❄❄❄❄❄", // Используем символы вместо null
+      "null",
       "--userType",
       "legacy",
-
-      // ДОБАВЛЯЕМ специфичные для Forge аргументы
-      "--launchTarget",
-      "fmlclient",
     ];
 
     const allArgs = [...finalJvmArgs, ...gameArgs];
 
-    console.log("🚀 Запускаем Minecraft с Forge...");
+    console.log("🚀 Запускаем Minecraft через BootstrapLauncher...");
     console.log(`📁 Рабочая директория: ${instancePath}`);
-    console.log(`📋 Основной класс: ${this.getMainClass(modpack)}`);
-
-    // Логируем первые несколько аргументов для отладки
-    console.log("🔧 Первые 10 аргументов запуска:");
-    allArgs.slice(0, 10).forEach((arg, index) => {
-      console.log(`  ${index + 1}. ${arg}`);
-    });
+    console.log(`📋 Bootstrap класс: ${this.getMainClass(modpack)}`);
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
@@ -1789,25 +1692,12 @@ class MinecraftLauncher {
       detached: false,
       env: {
         ...process.env,
-        MC_LAUNCHER_BRAND: "azurael",
-        MC_LAUNCHER_VERSION: "offline",
         JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
-        AUTHLIB_OFFLINE: "true",
-
-        // ДОБАВЛЯЕМ переменные для ModLauncher
-        FORGE_VERSION: modpack.forge_version,
-        MC_VERSION: modpack.minecraft_version,
       },
     });
 
     minecraft.on("error", (error) => {
       console.error("❌ Ошибка запуска процесса:", error);
-
-      if (error.code === "ENAMETOOLONG") {
-        throw new Error(
-          "Путь к файлам слишком длинный. Переместите лаунчер ближе к корню диска (например, C:\\Azurael\\)."
-        );
-      }
       throw error;
     });
 
@@ -1819,6 +1709,69 @@ class MinecraftLauncher {
 
     console.log(`✅ Minecraft процесс запущен (PID: ${minecraft.pid})`);
     return minecraft;
+  }
+
+  async ensureForgeStructure(instancePath, modpack) {
+    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
+    const forgeDir = path.join(instancePath, "versions", forgeVersion);
+    const forgeJar = path.join(forgeDir, `${forgeVersion}.jar`);
+    const forgeJson = path.join(forgeDir, `${forgeVersion}.json`);
+
+    // Проверяем что Forge JAR существует и не поврежден
+    if (await fs.pathExists(forgeJar)) {
+      const stats = await fs.stat(forgeJar);
+      if (stats.size < 1024 * 1024) {
+        // Меньше 1MB
+        console.log("❌ Forge JAR поврежден, удаляем...");
+        await fs.remove(forgeJar);
+      }
+    }
+
+    // Если Forge JAR отсутствует, скачиваем заново
+    if (!(await fs.pathExists(forgeJar))) {
+      console.log("📥 Скачиваем Forge JAR заново...");
+      await this.downloadForgeClient(instancePath, modpack);
+    }
+
+    // Создаем правильный JSON профиль для Forge
+    const forgeProfile = {
+      id: forgeVersion,
+      inheritsFrom: modpack.minecraft_version,
+      type: "release",
+      mainClass: "cpw.mods.bootstraplauncher.BootstrapLauncher",
+      minecraftArguments:
+        "--username ${auth_player_name} --version ${version_name} --gameDir ${game_directory} --assetsDir ${assets_root} --assetIndex ${assets_index_name} --uuid ${auth_uuid} --accessToken ${auth_access_token} --userType ${user_type} --tweakClass cpw.mods.fml.common.launcher.FMLTweaker",
+      libraries: [],
+    };
+
+    await fs.writeFile(forgeJson, JSON.stringify(forgeProfile, null, 2));
+    console.log("✅ Создан правильный профиль Forge");
+  }
+
+  async createBootstrapLaunchConfig(instancePath, modpack) {
+    const configPath = path.join(instancePath, "launch.cfg");
+
+    const launchConfig = `# Bootstrap Launch Configuration
+  minecraft.client.jar=${path.join(
+    instancePath,
+    "versions",
+    modpack.minecraft_version,
+    `${modpack.minecraft_version}.jar`
+  )}
+  forge.client.jar=${path.join(
+    instancePath,
+    "versions",
+    `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`,
+    `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}.jar`
+  )}
+  libraries.dir=${path.join(instancePath, "libraries")}
+  game.dir=${instancePath}
+  assets.dir=${path.join(instancePath, "assets")}
+  natives.dir=${path.join(instancePath, "versions", "natives")}
+  `;
+
+    await fs.writeFile(configPath, launchConfig);
+    console.log("✅ Создан launch.cfg для BootstrapLauncher");
   }
 
   async downloadMinecraftAssets(instancePath, mcVersion, onProgress = null) {
@@ -1963,7 +1916,7 @@ class MinecraftLauncher {
   async buildClasspath(instancePath, modpack) {
     const classpath = [];
 
-    // 1. СНАЧАЛА добавляем BootstrapLauncher - он должен быть ПЕРВЫМ
+    // 1. ПЕРВЫМ добавляем BootstrapLauncher - он инициализирует всё остальное
     const bootstrapJar = path.join(
       instancePath,
       "libraries",
@@ -1983,63 +1936,18 @@ class MinecraftLauncher {
       );
     }
 
-    // 2. ПОТОМ добавляем ModLauncher
-    const modlauncherJar = path.join(
-      instancePath,
-      "libraries",
-      "cpw",
-      "mods",
-      "modlauncher",
-      "10.0.9",
-      "modlauncher-10.0.9.jar"
-    );
-
-    if (await fs.pathExists(modlauncherJar)) {
-      console.log("✅ ModLauncher jar найден:", modlauncherJar);
-      classpath.push(modlauncherJar);
-    }
-
-    // 3. ПОТОМ Forge JAR
-    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
-    const forgeJar = path.join(
-      instancePath,
-      "versions",
-      forgeVersion,
-      `${forgeVersion}.jar`
-    );
-
-    if (await fs.pathExists(forgeJar)) {
-      console.log("✅ Forge jar найден:", forgeJar);
-      classpath.push(forgeJar);
-    } else {
-      throw new Error("Forge JAR не найден. Переустановите модпак.");
-    }
-
-    // 4. Добавляем Minecraft vanilla client JAR
-    const mcVersion = modpack.minecraft_version;
-    const vanillaJar = path.join(
-      instancePath,
-      "versions",
-      mcVersion,
-      `${mcVersion}.jar`
-    );
-
-    if (await fs.pathExists(vanillaJar)) {
-      console.log("✅ Vanilla Minecraft jar найден:", vanillaJar);
-      classpath.push(vanillaJar);
-    }
-
-    // 5. Остальные библиотеки
+    // 2. Добавляем все библиотеки из libraries (но НЕ главные JAR файлы)
     const libsDir = path.join(instancePath, "libraries");
     if (await fs.pathExists(libsDir)) {
       const allLibJars = await this.findJarFiles(libsDir);
-      const remainingLibs = allLibJars.filter(
-        (jar) => !classpath.includes(jar)
+      // Исключаем BootstrapLauncher который уже добавили
+      const otherLibs = allLibJars.filter(
+        (jar) => !jar.includes("bootstraplauncher")
       );
-      classpath.push(...remainingLibs);
+      classpath.push(...otherLibs);
     }
 
-    console.log(`📚 Общий classpath содержит ${classpath.length} файлов`);
+    console.log(`📚 Classpath содержит ${classpath.length} файлов`);
     return classpath.join(path.delimiter);
   }
 
