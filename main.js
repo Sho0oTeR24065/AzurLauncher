@@ -759,26 +759,44 @@ class MinecraftLauncher {
       "-Dlog4j2.formatMsgNoLookups=true",
     ];
 
-    // МИНИМАЛЬНЫЕ аргументы для Java 17+ - только самое необходимое
+    // РАСШИРЕННЫЕ открытия модулей для Java 17+
     if (javaMainVersion >= 17) {
       args.push(
-        // Только критичные открытия пакетов
+        // Базовые пакеты
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
         "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
-        "--add-opens=java.base/java.io=ALL-UNNAMED"
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
 
-        // УБРАЛИ ВСЕ проблемные флаги:
-        // - --module-path
-        // - --add-modules
-        // - --permit-illegal-access
-        // - -Djdk.module.*
+        // КРИТИЧНО для BootstrapLauncher:
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+
+        // Для секьюрити и криптографии
+        "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+
+        // Desktop модуль для GUI
+        "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
+        "--add-opens=java.desktop/javax.swing=ALL-UNNAMED",
+
+        // Отключаем предупреждения о незаконном доступе
+        "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-exports=java.base/sun.security.util=ALL-UNNAMED"
       );
     }
 
     if (javaMainVersion >= 21) {
-      args.push("-XX:+EnableDynamicAgentLoading");
+      args.push(
+        "-XX:+EnableDynamicAgentLoading",
+        // Дополнительные флаги для Java 21
+        "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+        "--add-opens=java.base/java.math=ALL-UNNAMED"
+      );
     }
 
     return args;
@@ -1726,13 +1744,37 @@ Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
 
     const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
 
-    // УЛЬТРА-ПРОСТЫЕ аргументы - только для vanilla Minecraft
-    const vanillaArgs = [
+    // ИСПРАВЛЕНИЕ: Строим ПОЛНЫЙ classpath для vanilla включая все библиотеки
+    console.log("🔧 Создание полного classpath для vanilla...");
+    const classpathFile = await this.createVanillaClasspathFile(
+      instancePath,
+      modpack
+    );
+
+    // Базовые JVM аргументы для vanilla
+    const vanillaJvmArgs = [
       `-Xmx${memory}`,
       "-Xms1G",
+      "-XX:+UseG1GC",
+      "-Dlog4j2.formatMsgNoLookups=true",
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
+    ];
+
+    // Добавляем модульные флаги для Java 17+
+    if (javaInfo.majorVersion >= 17) {
+      vanillaJvmArgs.push(
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED"
+      );
+    }
+
+    const vanillaArgs = [
+      ...vanillaJvmArgs,
       "-cp",
-      vanillaJar, // Только vanilla JAR
+      `@${classpathFile}`, // Используем файл с classpath
       "net.minecraft.client.main.Main", // Vanilla главный класс
       "--username",
       username,
@@ -1752,8 +1794,9 @@ Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
       "legacy",
     ];
 
-    console.log("🚀 Запускаем VANILLA Minecraft (без модов)...");
+    console.log("🚀 Запускаем VANILLA Minecraft с полным classpath...");
     console.log(`📁 Рабочая директория: ${instancePath}`);
+    console.log(`📋 Classpath файл: ${classpathFile}`);
 
     const minecraft = spawn(javaPath, vanillaArgs, {
       cwd: instancePath,
@@ -1780,6 +1823,300 @@ Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
     return minecraft;
   }
 
+  // НОВАЯ ФУНКЦИЯ: Создание classpath для vanilla Minecraft
+  async createVanillaClasspathFile(instancePath, modpack) {
+    const tempDir = path.join(instancePath, "temp");
+    const classpathFile = path.join(tempDir, "vanilla-classpath.txt");
+
+    await fs.ensureDir(tempDir);
+
+    console.log("🔧 Создаем vanilla classpath файл...");
+
+    const classpath = [];
+
+    // 1. ПЕРВЫМ добавляем vanilla Minecraft JAR
+    const vanillaJar = path.join(
+      instancePath,
+      "versions",
+      modpack.minecraft_version,
+      `${modpack.minecraft_version}.jar`
+    );
+
+    if (await fs.pathExists(vanillaJar)) {
+      classpath.push(vanillaJar);
+    } else {
+      throw new Error("Vanilla Minecraft JAR не найден");
+    }
+
+    // 2. Добавляем ТОЛЬКО vanilla библиотеки (без Forge)
+    const vanillaLibs = [
+      // JOpt Simple - КРИТИЧНО для vanilla
+      path.join(
+        libsDir,
+        "net",
+        "sf",
+        "jopt-simple",
+        "jopt-simple",
+        "5.0.4",
+        "jopt-simple-5.0.4.jar"
+      ),
+
+      // Logging
+      path.join(
+        libsDir,
+        "com",
+        "mojang",
+        "logging",
+        "1.1.1",
+        "logging-1.1.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "apache",
+        "logging",
+        "log4j",
+        "log4j-api",
+        "2.17.0",
+        "log4j-api-2.17.0.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "apache",
+        "logging",
+        "log4j",
+        "log4j-core",
+        "2.17.0",
+        "log4j-core-2.17.0.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "apache",
+        "logging",
+        "log4j",
+        "log4j-slf4j18-impl",
+        "2.17.0",
+        "log4j-slf4j18-impl-2.17.0.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "slf4j",
+        "slf4j-api",
+        "1.8.0-beta4",
+        "slf4j-api-1.8.0-beta4.jar"
+      ),
+
+      // Mojang основные библиотеки
+      path.join(
+        libsDir,
+        "com",
+        "mojang",
+        "authlib",
+        "4.0.43",
+        "authlib-4.0.43.jar"
+      ),
+      path.join(
+        libsDir,
+        "com",
+        "mojang",
+        "brigadier",
+        "1.0.18",
+        "brigadier-1.0.18.jar"
+      ),
+      path.join(
+        libsDir,
+        "com",
+        "mojang",
+        "datafixerupper",
+        "6.0.8",
+        "datafixerupper-6.0.8.jar"
+      ),
+      path.join(
+        libsDir,
+        "com",
+        "mojang",
+        "text2speech",
+        "1.12.4",
+        "text2speech-1.12.4.jar"
+      ),
+
+      // LWJGL (основные JAR файлы)
+      path.join(libsDir, "org", "lwjgl", "lwjgl", "3.3.1", "lwjgl-3.3.1.jar"),
+      path.join(
+        libsDir,
+        "org",
+        "lwjgl",
+        "lwjgl-jemalloc",
+        "3.3.1",
+        "lwjgl-jemalloc-3.3.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "lwjgl",
+        "lwjgl-openal",
+        "3.3.1",
+        "lwjgl-openal-3.3.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "lwjgl",
+        "lwjgl-opengl",
+        "3.3.1",
+        "lwjgl-opengl-3.3.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "lwjgl",
+        "lwjgl-glfw",
+        "3.3.1",
+        "lwjgl-glfw-3.3.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "lwjgl",
+        "lwjgl-stb",
+        "3.3.1",
+        "lwjgl-stb-3.3.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "lwjgl",
+        "lwjgl-tinyfd",
+        "3.3.1",
+        "lwjgl-tinyfd-3.3.1.jar"
+      ),
+
+      // Системные библиотеки
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "code",
+        "gson",
+        "gson",
+        "2.8.9",
+        "gson-2.8.9.jar"
+      ),
+      path.join(libsDir, "org", "joml", "joml", "1.10.5", "joml-1.10.5.jar"),
+      path.join(
+        libsDir,
+        "com",
+        "ibm",
+        "icu",
+        "icu4j",
+        "71.1",
+        "icu4j-71.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "it",
+        "unimi",
+        "dsi",
+        "fastutil",
+        "8.5.9",
+        "fastutil-8.5.9.jar"
+      ),
+
+      // Netty для сетевого взаимодействия
+      path.join(
+        libsDir,
+        "io",
+        "netty",
+        "netty-common",
+        "4.1.82.Final",
+        "netty-common-4.1.82.Final.jar"
+      ),
+      path.join(
+        libsDir,
+        "io",
+        "netty",
+        "netty-buffer",
+        "4.1.82.Final",
+        "netty-buffer-4.1.82.Final.jar"
+      ),
+      path.join(
+        libsDir,
+        "io",
+        "netty",
+        "netty-codec",
+        "4.1.82.Final",
+        "netty-codec-4.1.82.Final.jar"
+      ),
+      path.join(
+        libsDir,
+        "io",
+        "netty",
+        "netty-handler",
+        "4.1.82.Final",
+        "netty-handler-4.1.82.Final.jar"
+      ),
+      path.join(
+        libsDir,
+        "io",
+        "netty",
+        "netty-resolver",
+        "4.1.82.Final",
+        "netty-resolver-4.1.82.Final.jar"
+      ),
+      path.join(
+        libsDir,
+        "io",
+        "netty",
+        "netty-transport",
+        "4.1.82.Final",
+        "netty-transport-4.1.82.Final.jar"
+      ),
+
+      // Guava
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "guava",
+        "guava",
+        "31.1-jre",
+        "guava-31.1-jre.jar"
+      ),
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "guava",
+        "failureaccess",
+        "1.0.1",
+        "failureaccess-1.0.1.jar"
+      ),
+    ];
+
+    // Фильтруем только существующие файлы
+    const existingLibs = [];
+    for (const libPath of vanillaLibs) {
+      if (await fs.pathExists(libPath)) {
+        existingLibs.push(libPath);
+      } else {
+        console.log(`⚠️ Отсутствует библиотека: ${path.basename(libPath)}`);
+      }
+    }
+
+    classpath.push(...existingLibs);
+
+    console.log(`📚 Vanilla classpath содержит ${classpath.length} файлов`);
+
+    // Записываем classpath в файл
+    await fs.writeFile(classpathFile, classpath.join(path.delimiter), "utf8");
+
+    console.log(`✅ Создан vanilla classpath файл: ${classpathFile}`);
+    return classpathFile;
+  }
+
   async launchMinecraftSimple(username, modpack, customMemoryGB) {
     const instancePath = path.join(this.instancesDir, modpack.id);
 
@@ -1789,7 +2126,6 @@ Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
 
     await this.ensureForgeStructure(instancePath, modpack);
 
-    // Убеждаемся что Java доступна
     const javaInfo = await this.ensureJavaAvailable();
     const javaPath = javaInfo.path;
 
@@ -1797,16 +2133,16 @@ Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
       `☕ Используем Java: ${javaPath} (версия ${javaInfo.majorVersion})`
     );
 
-    // МАКСИМАЛЬНО ПРОСТЫЕ JVM аргументы
     const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
 
-    const simpleJvmArgs = [
+    // ИСПРАВЛЕННЫЕ JVM аргументы с ПОЛНОЙ поддержкой модулей
+    const enhancedJvmArgs = [
       `-Xmx${memory}`,
       "-Xms1G",
       "-XX:+UseG1GC",
       "-Dlog4j2.formatMsgNoLookups=true",
 
-      // ТОЛЬКО базовые системные свойства
+      // КРИТИЧЕСКИЕ системные свойства
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
       `-Dminecraft.client.jar=${path.join(
         instancePath,
@@ -1815,18 +2151,41 @@ Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
         `${modpack.minecraft_version}.jar`
       )}`,
 
-      // НЕТ модульных флагов - только classpath!
+      // ПОЛНЫЙ набор модульных флагов для Java 21
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED", // КРИТИЧНО для BootstrapLauncher
+      "--add-opens=java.base/java.security=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
+      "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
+      "--add-opens=java.desktop/javax.swing=ALL-UNNAMED",
+
+      // Экспорты для совместимости
+      "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-exports=java.base/sun.security.util=ALL-UNNAMED",
+
+      // Java 21 специфичные флаги
+      "-XX:+EnableDynamicAgentLoading",
+      "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+      "--add-opens=java.base/java.math=ALL-UNNAMED",
     ];
 
     // Строим classpath
-    console.log("🔧 Создание простого classpath...");
+    console.log("🔧 Создание расширенного classpath...");
     const classpathFile = await this.createClasspathFile(instancePath, modpack);
 
     const finalArgs = [
-      ...simpleJvmArgs,
+      ...enhancedJvmArgs,
       "-cp",
       `@${classpathFile}`,
-      "cpw.mods.bootstraplauncher.BootstrapLauncher", // Пробуем BootstrapLauncher но без модульных флагов
+      "cpw.mods.bootstraplauncher.BootstrapLauncher",
       "--username",
       username,
       "--version",
@@ -1845,18 +2204,104 @@ Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
       "legacy",
     ];
 
-    console.log("🚀 Запускаем Minecraft в ПРОСТОМ режиме...");
+    console.log("🚀 Запускаем Minecraft с ПОЛНОЙ модульной поддержкой...");
     console.log(`📁 Рабочая директория: ${instancePath}`);
-    console.log(
-      `📋 Главный класс: cpw.mods.bootstraplauncher.BootstrapLauncher`
-    );
-    console.log(
-      `📏 Аргументы (${finalArgs.length}):`,
-      finalArgs.slice(0, 10).join(" "),
-      "..."
-    );
+    console.log(`📋 Classpath файл: ${classpathFile}`);
+    console.log(`🔧 JVM флагов: ${enhancedJvmArgs.length}`);
 
     const minecraft = spawn(javaPath, finalArgs, {
+      cwd: instancePath,
+      stdio: ["ignore", "inherit", "inherit"],
+      detached: false,
+      env: {
+        ...process.env,
+        JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
+      },
+    });
+
+    minecraft.on("error", (error) => {
+      console.error("❌ Ошибка запуска процесса:", error);
+      throw error;
+    });
+
+    minecraft.on("exit", (code, signal) => {
+      console.log(
+        `🔴 Minecraft завершился с кодом: ${code}, сигнал: ${signal}`
+      );
+    });
+
+    console.log(`✅ Minecraft процесс запущен (PID: ${minecraft.pid})`);
+    return minecraft;
+  }
+
+  // ИСПРАВЛЕНИЕ 4: Альтернативный запуск через ModLauncher напрямую
+  async launchMinecraftDirect(username, modpack, customMemoryGB) {
+    const instancePath = path.join(this.instancesDir, modpack.id);
+
+    if (!fs.existsSync(instancePath)) {
+      throw new Error("Модпак не установлен");
+    }
+
+    const javaInfo = await this.ensureJavaAvailable();
+    const javaPath = javaInfo.path;
+    const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
+
+    console.log("🚀 Прямой запуск через ModLauncher...");
+
+    // Системные свойства для ModLauncher
+    const systemProps = [
+      `-Xmx${memory}`,
+      "-Xms1G",
+      `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
+
+      // Специальные свойства для ModLauncher
+      "-Dlegacy.debugClassLoading=true",
+      "-Dlegacy.debugClassLoadingFiner=false",
+      "-Dfml.ignoreInvalidMinecraftCertificates=true",
+      "-Dfml.ignorePatchDiscrepancies=true",
+      "-Djava.net.preferIPv4Stack=true",
+
+      // Полный набор модульных флагов
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens=java.base/java.security=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
+      "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+
+      // Экспорты
+      "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-exports=java.base/sun.security.util=ALL-UNNAMED",
+    ];
+
+    const classpathFile = await this.createClasspathFile(instancePath, modpack);
+
+    const allArgs = [
+      ...systemProps,
+      "-cp",
+      `@${classpathFile}`,
+      "cpw.mods.modlauncher.Launcher", // Прямой запуск ModLauncher
+      "--launchTarget",
+      "forgeclient",
+      "--gameDir",
+      instancePath,
+      "--username",
+      username,
+      "--uuid",
+      this.generateOfflineUUID(username),
+      "--accessToken",
+      "null",
+    ];
+
+    console.log("🚀 Запуск через ModLauncher напрямую...");
+
+    const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
       stdio: ["ignore", "inherit", "inherit"],
       detached: false,
@@ -2362,7 +2807,7 @@ ipcMain.handle(
   "launch-minecraft",
   async (event, username, modpack, memoryGB) => {
     try {
-      await launcher.launchMinecraftVanilla(username, modpack, memoryGB);
+      await launcher.launchMinecraftDirect(username, modpack, memoryGB);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
