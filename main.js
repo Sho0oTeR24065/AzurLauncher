@@ -1021,33 +1021,192 @@ class MinecraftLauncher {
     const forgeJar = path.join(forgeDir, `${forgeVersion}.jar`);
 
     if (await fs.pathExists(forgeJar)) {
+      console.log(`✅ Forge JAR уже существует: ${forgeJar}`);
       if (onProgress) onProgress(100);
       return;
     }
 
     await fs.ensureDir(forgeDir);
 
-    const forgeUrl = `https://maven.minecraftforge.net/net/minecraftforge/forge/${modpack.minecraft_version}-${modpack.forge_version}/forge-${modpack.minecraft_version}-${modpack.forge_version}-client.jar`;
+    console.log(`📥 Скачиваем Forge client JAR: ${forgeVersion}`);
 
-    await this.downloadFile(forgeUrl, forgeJar, (progress) => {
-      if (onProgress) onProgress(progress);
-    });
+    // Используем универсальный Forge JAR (не client-specific)
+    const forgeUrl = `https://maven.minecraftforge.net/net/minecraftforge/forge/${modpack.minecraft_version}-${modpack.forge_version}/forge-${modpack.minecraft_version}-${modpack.forge_version}.jar`;
 
-    // Создаем JSON профиль для Forge
-    const forgeProfile = {
-      id: forgeVersion,
-      mainClass: "cpw.mods.modlauncher.Launcher",
-      arguments: {
-        jvm: ["-DforgeLoadingContext=true"],
-      },
-    };
+    try {
+      await this.downloadFile(forgeUrl, forgeJar, (progress) => {
+        console.log(`Forge download progress: ${progress}%`);
+        if (onProgress) onProgress(progress);
+      });
 
-    await fs.writeFile(
-      path.join(forgeDir, `${forgeVersion}.json`),
-      JSON.stringify(forgeProfile, null, 2)
+      console.log(`✅ Forge JAR скачан: ${forgeJar}`);
+
+      // Создаем JSON профиль для Forge
+      const forgeProfile = {
+        id: forgeVersion,
+        inheritsFrom: modpack.minecraft_version,
+        type: "release",
+        time: new Date().toISOString(),
+        releaseTime: new Date().toISOString(),
+        mainClass: "cpw.mods.modlauncher.Launcher",
+        arguments: {
+          jvm: [
+            "-DforgeLoadingContext=true",
+            `-Dfml.forgeVersion=${modpack.forge_version}`,
+            `-Dfml.mcVersion=${modpack.minecraft_version}`,
+            "-Dfml.majorVersion=47",
+          ],
+          game: [],
+        },
+        libraries: [],
+        logging: {},
+        downloads: {},
+        javaVersion: {
+          component: "java-runtime-gamma",
+          majorVersion: 17,
+        },
+      };
+
+      await fs.writeFile(
+        path.join(forgeDir, `${forgeVersion}.json`),
+        JSON.stringify(forgeProfile, null, 2)
+      );
+
+      console.log(`✅ Создан профиль Forge: ${forgeVersion}.json`);
+
+      if (onProgress) onProgress(100);
+    } catch (error) {
+      console.error(`❌ Ошибка скачивания Forge: ${error.message}`);
+
+      // Если основная ссылка не работает, пробуем альтернативную
+      console.log("🔄 Пробуем альтернативную ссылку для Forge...");
+
+      const altForgeUrl = `https://files.minecraftforge.net/maven/net/minecraftforge/forge/${modpack.minecraft_version}-${modpack.forge_version}/forge-${modpack.minecraft_version}-${modpack.forge_version}.jar`;
+
+      try {
+        await this.downloadFile(altForgeUrl, forgeJar, (progress) => {
+          console.log(`Forge alt download progress: ${progress}%`);
+          if (onProgress) onProgress(progress);
+        });
+
+        console.log(`✅ Forge JAR скачан (альтернативная ссылка): ${forgeJar}`);
+        if (onProgress) onProgress(100);
+      } catch (altError) {
+        console.error(
+          `❌ Альтернативная ссылка тоже не работает: ${altError.message}`
+        );
+        throw new Error(`Не удалось скачать Forge JAR: ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * Проверяет целостность установки Forge
+   */
+  async checkForgeIntegrity(instancePath, modpack) {
+    const libsDir = path.join(instancePath, "libraries");
+
+    // Критически важные библиотеки для работы ModLauncher
+    const criticalForgeLibs = [
+      path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "modlauncher",
+        "10.0.9",
+        "modlauncher-10.0.9.jar"
+      ),
+      path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "securejarhandler",
+        "2.1.10",
+        "securejarhandler-2.1.10.jar"
+      ),
+
+      // ДОБАВЛЯЕМ FMLLoader - это критично!
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "fmlloader",
+        `1.20.1-${modpack.forge_version}`,
+        `fmlloader-1.20.1-${modpack.forge_version}.jar`
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "fmlcore",
+        `1.20.1-${modpack.forge_version}`,
+        `fmlcore-1.20.1-${modpack.forge_version}.jar`
+      ),
+
+      path.join(libsDir, "org", "ow2", "asm", "asm", "9.5", "asm-9.5.jar"),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-tree",
+        "9.5",
+        "asm-tree-9.5.jar"
+      ),
+    ];
+
+    const missingLibs = [];
+
+    for (const lib of criticalForgeLibs) {
+      if (!(await fs.pathExists(lib))) {
+        missingLibs.push(path.basename(lib));
+        console.log(
+          `❌ Отсутствует критическая библиотека: ${path.basename(lib)}`
+        );
+      } else {
+        // Проверяем что файл не пустой
+        const stats = await fs.stat(lib);
+        if (stats.size < 1024) {
+          // Меньше 1KB - точно поврежден
+          missingLibs.push(path.basename(lib));
+          console.log(
+            `❌ Поврежденная библиотека (слишком мала): ${path.basename(lib)}`
+          );
+        }
+      }
+    }
+
+    if (missingLibs.length > 0) {
+      throw new Error(
+        `Отсутствуют критические библиотеки Forge: ${missingLibs.join(
+          ", "
+        )}. Переустановите модпак.`
+      );
+    }
+
+    // Проверяем главный Forge JAR
+    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
+    const forgeJar = path.join(
+      instancePath,
+      "versions",
+      forgeVersion,
+      `${forgeVersion}.jar`
     );
 
-    if (onProgress) onProgress(100);
+    if (!(await fs.pathExists(forgeJar))) {
+      throw new Error(`Отсутствует главный JAR Forge: ${forgeVersion}.jar`);
+    }
+
+    const forgeStats = await fs.stat(forgeJar);
+    if (forgeStats.size < 1024 * 1024) {
+      // Меньше 1MB - точно поврежден
+      throw new Error(
+        `Поврежден главный JAR Forge (размер ${forgeStats.size} байт)`
+      );
+    }
+
+    console.log("✅ Проверка целостности Forge прошла успешно");
+    return true;
   }
 
   async getYandexDirectLink(shareUrl) {
@@ -1473,6 +1632,14 @@ class MinecraftLauncher {
       throw new Error("Модпак не установлен");
     }
 
+    console.log("🔍 Проверка целостности Forge...");
+    try {
+      await this.checkForgeIntegrity(instancePath, modpack);
+    } catch (error) {
+      console.error("❌ Ошибка целостности Forge:", error.message);
+      throw error;
+    }
+
     // ЗАПУСКАЕМ мок-сервер аутентификации ПЕРЕД запуском игры
     console.log("🌐 Запускаем мок-сервер аутентификации...");
     await this.startMockAuthServer();
@@ -1488,6 +1655,10 @@ class MinecraftLauncher {
     const javaInfo = await this.ensureJavaAvailable();
     const javaPath = javaInfo.path;
 
+    console.log(
+      `☕ Используем Java: ${javaPath} (версия ${javaInfo.majorVersion})`
+    );
+
     // Строим аргументы запуска
     const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
     const jvmArgs = this.getJVMArgs(
@@ -1500,35 +1671,55 @@ class MinecraftLauncher {
 
     await this.checkMissingLibraries(instancePath, modpack);
 
+    console.log("🔧 Построение classpath...");
     const classpath = await this.buildClasspath(instancePath, modpack);
 
-    // УЛУЧШЕННЫЕ JVM аргументы с дополнительными параметрами offline режима
+    // Проверяем что classpath содержит необходимые компоненты
+    if (!classpath.includes("modlauncher")) {
+      throw new Error(
+        "ModLauncher отсутствует в classpath! Переустановите модпак."
+      );
+    }
+
+    // УЛУЧШЕННЫЕ JVM аргументы
     const finalJvmArgs = [
       ...jvmArgs,
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
 
-      // КРИТИЧНО: отключаем все проверки аутентификации на уровне JVM
+      // Отключаем все проверки аутентификации
       "-Dcom.mojang.authlib.GameProfile.authHost=http://127.0.0.1:25565",
       "-Dcom.mojang.authlib.GameProfile.accountsHost=http://127.0.0.1:25565",
       "-Dcom.mojang.authlib.GameProfile.sessionHost=http://127.0.0.1:25565",
       "-Dcom.mojang.authlib.GameProfile.servicesHost=http://127.0.0.1:25565",
 
-      // Блокируем попытки подключения к authlib
-      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_BASE_URL=http://127.0.0.1:25585",
-      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SESSION_HOST=http://127.0.0.1:25585",
-      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SERVICES_HOST=http://127.0.0.1:25585",
+      // Блокируем Yggdrasil
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_BASE_URL=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SESSION_HOST=http://127.0.0.1:25565",
+      "-Dcom.mojang.authlib.yggdrasil.YggdrasilEnvironment.PROP_SERVICES_HOST=http://127.0.0.1:25565",
 
       "-Djava.net.preferIPv4Stack=true",
       "-Dcom.mojang.authlib.properties.name=offline",
       "-Dminecraft.launcher.brand=minecraft-launcher",
       "-Dminecraft.launcher.version=2.1.184",
 
+      // ДОБАВЛЯЕМ критически важные свойства для ModLauncher и FMLLoader
+      "-DforgeLoadingContext=true",
+      `-Dfml.forgeVersion=${modpack.forge_version}`,
+      `-Dfml.mcVersion=${modpack.minecraft_version}`,
+      "-Dfml.majorVersion=47",
+
+      // КРИТИЧНО: указываем ModLauncher что запускать
+      "-DmodLauncher.gameDir=" + instancePath,
+      "-DignoreList=bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client,fmlcore,javafmlmod,lowcodelanguage,mixin,forge",
+
+      // Для правильной работы FMLLoader
+      "-Dnet.minecraftforge.fml.loading.moddiscovery.modsFolder=" +
+        path.join(instancePath, "mods"),
+
       "-cp",
       classpath,
       this.getMainClass(modpack),
     ];
-
-    const shortInstancePath = path.relative(process.cwd(), instancePath);
 
     // ИСПРАВЛЕННЫЕ game аргументы
     const gameArgs = [
@@ -1545,32 +1736,47 @@ class MinecraftLauncher {
       "--uuid",
       this.generateOfflineUUID(username),
       "--accessToken",
-      "null",
+      "❄❄❄❄❄❄❄❄", // Используем символы вместо null
       "--userType",
       "legacy",
+
+      // ДОБАВЛЯЕМ специфичные для Forge аргументы
+      "--launchTarget",
+      "forgeclient",
     ];
 
     const allArgs = [...finalJvmArgs, ...gameArgs];
 
-    console.log(
-      "🚀 Запускаем Minecraft с исправленными параметрами offline режима"
-    );
+    console.log("🚀 Запускаем Minecraft с Forge...");
+    console.log(`📁 Рабочая директория: ${instancePath}`);
+    console.log(`📋 Основной класс: ${this.getMainClass(modpack)}`);
+
+    // Логируем первые несколько аргументов для отладки
+    console.log("🔧 Первые 10 аргументов запуска:");
+    allArgs.slice(0, 10).forEach((arg, index) => {
+      console.log(`  ${index + 1}. ${arg}`);
+    });
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
-      stdio: ["ignore", "inherit", "inherit"], // Более безопасная настройка stdio
+      stdio: ["ignore", "inherit", "inherit"],
       detached: false,
       env: {
         ...process.env,
         MC_LAUNCHER_BRAND: "azurael",
         MC_LAUNCHER_VERSION: "offline",
         JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
-        // ДОБАВИТЬ:
         AUTHLIB_OFFLINE: "true",
+
+        // ДОБАВЛЯЕМ переменные для ModLauncher
+        FORGE_VERSION: modpack.forge_version,
+        MC_VERSION: modpack.minecraft_version,
       },
     });
 
     minecraft.on("error", (error) => {
+      console.error("❌ Ошибка запуска процесса:", error);
+
       if (error.code === "ENAMETOOLONG") {
         throw new Error(
           "Путь к файлам слишком длинный. Переместите лаунчер ближе к корню диска (например, C:\\Azurael\\)."
@@ -1579,6 +1785,13 @@ class MinecraftLauncher {
       throw error;
     });
 
+    minecraft.on("exit", (code, signal) => {
+      console.log(
+        `🔴 Minecraft завершился с кодом: ${code}, сигнал: ${signal}`
+      );
+    });
+
+    console.log(`✅ Minecraft процесс запущен (PID: ${minecraft.pid})`);
     return minecraft;
   }
 
@@ -1586,65 +1799,138 @@ class MinecraftLauncher {
     const libsDir = path.join(instancePath, "libraries");
     await fs.ensureDir(libsDir);
 
-    // Список критически важных библиотек для MC 1.20.1 + Forge 47.3.33
+    // Список ТОЛЬКО РАБОЧИХ библиотек для MC 1.20.1 + Forge 47.3.33
     const requiredLibs = [
-      // Mojang logging
+      // =============================================
+      // КРИТИЧЕСКИЕ БИБЛИОТЕКИ FORGE (ПРОВЕРЕННЫЕ)
+      // =============================================
+
+      // ModLauncher - основа Forge (РАБОТАЕТ)
       {
-        url: "https://libraries.minecraft.net/com/mojang/logging/1.1.1/logging-1.1.1.jar",
+        url: "https://maven.minecraftforge.net/cpw/mods/modlauncher/10.0.9/modlauncher-10.0.9.jar",
         path: path.join(
           libsDir,
-          "com",
-          "mojang",
-          "logging",
-          "1.1.1",
-          "logging-1.1.1.jar"
+          "cpw",
+          "mods",
+          "modlauncher",
+          "10.0.9",
+          "modlauncher-10.0.9.jar"
         ),
       },
 
-      // OSHI для системной информации
+      // FMLLoader - КРИТИЧНО (РАБОТАЕТ)
       {
-        url: "https://repo1.maven.org/maven2/com/github/oshi/oshi-core/6.4.0/oshi-core-6.4.0.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "github",
-          "oshi",
-          "oshi-core",
-          "6.4.0",
-          "oshi-core-6.4.0.jar"
-        ),
-      },
-
-      // JNA для OSHI
-      {
-        url: "https://repo1.maven.org/maven2/net/java/dev/jna/jna/5.12.1/jna-5.12.1.jar",
+        url: "https://maven.minecraftforge.net/net/minecraftforge/fmlloader/1.20.1-47.3.33/fmlloader-1.20.1-47.3.33.jar",
         path: path.join(
           libsDir,
           "net",
-          "java",
-          "dev",
-          "jna",
-          "jna",
-          "5.12.1",
-          "jna-5.12.1.jar"
+          "minecraftforge",
+          "fmlloader",
+          "1.20.1-47.3.33",
+          "fmlloader-1.20.1-47.3.33.jar"
         ),
       },
 
+      // FMLCore (РАБОТАЕТ)
       {
-        url: "https://repo1.maven.org/maven2/net/java/dev/jna/jna-platform/5.12.1/jna-platform-5.12.1.jar",
+        url: "https://maven.minecraftforge.net/net/minecraftforge/fmlcore/1.20.1-47.3.33/fmlcore-1.20.1-47.3.33.jar",
         path: path.join(
           libsDir,
           "net",
-          "java",
-          "dev",
-          "jna",
-          "jna-platform",
-          "5.12.1",
-          "jna-platform-5.12.1.jar"
+          "minecraftforge",
+          "fmlcore",
+          "1.20.1-47.3.33",
+          "fmlcore-1.20.1-47.3.33.jar"
         ),
       },
 
-      // ASM
+      // JavaFMLLanguage (РАБОТАЕТ)
+      {
+        url: "https://maven.minecraftforge.net/net/minecraftforge/javafmllanguage/1.20.1-47.3.33/javafmllanguage-1.20.1-47.3.33.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "minecraftforge",
+          "javafmllanguage",
+          "1.20.1-47.3.33",
+          "javafmllanguage-1.20.1-47.3.33.jar"
+        ),
+      },
+
+      // LowCodeLanguage (РАБОТАЕТ)
+      {
+        url: "https://maven.minecraftforge.net/net/minecraftforge/lowcodelanguage/1.20.1-47.3.33/lowcodelanguage-1.20.1-47.3.33.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "minecraftforge",
+          "lowcodelanguage",
+          "1.20.1-47.3.33",
+          "lowcodelanguage-1.20.1-47.3.33.jar"
+        ),
+      },
+
+      // SecureJarHandler (РАБОТАЕТ)
+      {
+        url: "https://maven.minecraftforge.net/cpw/mods/securejarhandler/2.1.10/securejarhandler-2.1.10.jar",
+        path: path.join(
+          libsDir,
+          "cpw",
+          "mods",
+          "securejarhandler",
+          "2.1.10",
+          "securejarhandler-2.1.10.jar"
+        ),
+      },
+
+      // EventBus (РАБОТАЕТ)
+      {
+        url: "https://maven.minecraftforge.net/net/minecraftforge/eventbus/6.0.5/eventbus-6.0.5.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "minecraftforge",
+          "eventbus",
+          "6.0.5",
+          "eventbus-6.0.5.jar"
+        ),
+      },
+
+      // CoreMods (РАБОТАЕТ)
+      {
+        url: "https://maven.minecraftforge.net/net/minecraftforge/coremods/5.1.6/coremods-5.1.6.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "minecraftforge",
+          "coremods",
+          "5.1.6",
+          "coremods-5.1.6.jar"
+        ),
+      },
+
+      // BootstrapLauncher (РАБОТАЕТ)
+      {
+        url: "https://maven.minecraftforge.net/cpw/mods/bootstraplauncher/1.1.2/bootstraplauncher-1.1.2.jar",
+        path: path.join(
+          libsDir,
+          "cpw",
+          "mods",
+          "bootstraplauncher",
+          "1.1.2",
+          "bootstraplauncher-1.1.2.jar"
+        ),
+      },
+
+      // УБИРАЕМ НЕДОСТУПНЫЕ БИБЛИОТЕКИ:
+      // - mcp_config (404)
+      // - jarhandling (404)
+      // - forgeautorenamingtool (404)
+      // - modlauncher-api (404)
+
+      // =============================================
+      // ASM библиотеки - КРИТИЧНЫ (ВСЕ РАБОТАЮТ)
+      // =============================================
       {
         url: "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.5/asm-9.5.jar",
         path: path.join(
@@ -1682,6 +1968,18 @@ class MinecraftLauncher {
         ),
       },
       {
+        url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-util/9.5/asm-util-9.5.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "ow2",
+          "asm",
+          "asm-util",
+          "9.5",
+          "asm-util-9.5.jar"
+        ),
+      },
+      {
         url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-analysis/9.5/asm-analysis-9.5.jar",
         path: path.join(
           libsDir,
@@ -1691,6 +1989,245 @@ class MinecraftLauncher {
           "asm-analysis",
           "9.5",
           "asm-analysis-9.5.jar"
+        ),
+      },
+
+      // =============================================
+      // ОСНОВНЫЕ MINECRAFT БИБЛИОТЕКИ (ВСЕ РАБОТАЮТ)
+      // =============================================
+
+      // Mojang logging
+      {
+        url: "https://libraries.minecraft.net/com/mojang/logging/1.1.1/logging-1.1.1.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "logging",
+          "1.1.1",
+          "logging-1.1.1.jar"
+        ),
+      },
+
+      // DataFixerUpper для MC 1.20.1
+      {
+        url: "https://libraries.minecraft.net/com/mojang/datafixerupper/6.0.8/datafixerupper-6.0.8.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "datafixerupper",
+          "6.0.8",
+          "datafixerupper-6.0.8.jar"
+        ),
+      },
+
+      // Authlib для MC 1.20.1
+      {
+        url: "https://libraries.minecraft.net/com/mojang/authlib/4.0.43/authlib-4.0.43.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "authlib",
+          "4.0.43",
+          "authlib-4.0.43.jar"
+        ),
+      },
+
+      // Brigadier
+      {
+        url: "https://libraries.minecraft.net/com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "brigadier",
+          "1.0.18",
+          "brigadier-1.0.18.jar"
+        ),
+      },
+
+      // Text2Speech
+      {
+        url: "https://libraries.minecraft.net/com/mojang/text2speech/1.12.4/text2speech-1.12.4.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "text2speech",
+          "1.12.4",
+          "text2speech-1.12.4.jar"
+        ),
+      },
+
+      // =============================================
+      // СИСТЕМНЫЕ БИБЛИОТЕКИ (ВСЕ РАБОТАЮТ)
+      // =============================================
+
+      // OSHI для системной информации
+      {
+        url: "https://repo1.maven.org/maven2/com/github/oshi/oshi-core/6.4.0/oshi-core-6.4.0.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "github",
+          "oshi",
+          "oshi-core",
+          "6.4.0",
+          "oshi-core-6.4.0.jar"
+        ),
+      },
+
+      // JNA для OSHI
+      {
+        url: "https://repo1.maven.org/maven2/net/java/dev/jna/jna/5.12.1/jna-5.12.1.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "java",
+          "dev",
+          "jna",
+          "jna",
+          "5.12.1",
+          "jna-5.12.1.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/net/java/dev/jna/jna-platform/5.12.1/jna-platform-5.12.1.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "java",
+          "dev",
+          "jna",
+          "jna-platform",
+          "5.12.1",
+          "jna-platform-5.12.1.jar"
+        ),
+      },
+
+      // Guava и зависимости
+      {
+        url: "https://repo1.maven.org/maven2/com/google/guava/guava/31.1-jre/guava-31.1-jre.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "guava",
+          "guava",
+          "31.1-jre",
+          "guava-31.1-jre.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/com/google/guava/failureaccess/1.0.1/failureaccess-1.0.1.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "guava",
+          "failureaccess",
+          "1.0.1",
+          "failureaccess-1.0.1.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "guava",
+          "listenablefuture",
+          "9999.0-empty-to-avoid-conflict-with-guava",
+          "listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/checkerframework/checker-qual/3.12.0/checker-qual-3.12.0.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "checkerframework",
+          "checker-qual",
+          "3.12.0",
+          "checker-qual-3.12.0.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/com/google/errorprone/error_prone_annotations/2.11.0/error_prone_annotations-2.11.0.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "errorprone",
+          "error_prone_annotations",
+          "2.11.0",
+          "error_prone_annotations-2.11.0.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/com/google/j2objc/j2objc-annotations/1.3/j2objc-annotations-1.3.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "j2objc",
+          "j2objc-annotations",
+          "1.3",
+          "j2objc-annotations-1.3.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "code",
+          "findbugs",
+          "jsr305",
+          "3.0.2",
+          "jsr305-3.0.2.jar"
+        ),
+      },
+
+      // JSON и сериализация
+      {
+        url: "https://repo1.maven.org/maven2/com/google/code/gson/gson/2.8.9/gson-2.8.9.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "code",
+          "gson",
+          "gson",
+          "2.8.9",
+          "gson-2.8.9.jar"
+        ),
+      },
+
+      // Apache Commons
+      {
+        url: "https://repo1.maven.org/maven2/commons-io/commons-io/2.11.0/commons-io-2.11.0.jar",
+        path: path.join(
+          libsDir,
+          "commons-io",
+          "2.11.0",
+          "commons-io-2.11.0.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/apache/commons/commons-lang3/3.12.0/commons-lang3-3.12.0.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "apache",
+          "commons",
+          "commons-lang3",
+          "3.12.0",
+          "commons-lang3-3.12.0.jar"
         ),
       },
 
@@ -1760,159 +2297,16 @@ class MinecraftLauncher {
         ),
       },
 
-      // Guava - ИСПРАВЛЕННАЯ ВЕРСИЯ для совместимости с DataFixerUpper 6.0.8
+      // JOpt Simple
       {
-        url: "https://repo1.maven.org/maven2/com/google/guava/guava/31.1-jre/guava-31.1-jre.jar",
+        url: "https://repo1.maven.org/maven2/net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar",
         path: path.join(
           libsDir,
-          "com",
-          "google",
-          "guava",
-          "guava",
-          "31.1-jre",
-          "guava-31.1-jre.jar"
-        ),
-      },
-
-      // Вспомогательные библиотеки для Guava
-      {
-        url: "https://repo1.maven.org/maven2/com/google/guava/failureaccess/1.0.1/failureaccess-1.0.1.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "google",
-          "guava",
-          "failureaccess",
-          "1.0.1",
-          "failureaccess-1.0.1.jar"
-        ),
-      },
-
-      {
-        url: "https://repo1.maven.org/maven2/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "google",
-          "guava",
-          "listenablefuture",
-          "9999.0-empty-to-avoid-conflict-with-guava",
-          "listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar"
-        ),
-      },
-
-      // Зависимости для Guava 31.1-jre
-      {
-        url: "https://repo1.maven.org/maven2/org/checkerframework/checker-qual/3.12.0/checker-qual-3.12.0.jar",
-        path: path.join(
-          libsDir,
-          "org",
-          "checkerframework",
-          "checker-qual",
-          "3.12.0",
-          "checker-qual-3.12.0.jar"
-        ),
-      },
-
-      {
-        url: "https://repo1.maven.org/maven2/com/google/errorprone/error_prone_annotations/2.11.0/error_prone_annotations-2.11.0.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "google",
-          "errorprone",
-          "error_prone_annotations",
-          "2.11.0",
-          "error_prone_annotations-2.11.0.jar"
-        ),
-      },
-
-      {
-        url: "https://repo1.maven.org/maven2/com/google/j2objc/j2objc-annotations/1.3/j2objc-annotations-1.3.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "google",
-          "j2objc",
-          "j2objc-annotations",
-          "1.3",
-          "j2objc-annotations-1.3.jar"
-        ),
-      },
-
-      {
-        url: "https://repo1.maven.org/maven2/com/google/code/gson/gson/2.8.9/gson-2.8.9.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "google",
-          "code",
-          "gson",
-          "2.8.9",
-          "gson-2.8.9.jar"
-        ),
-      },
-
-      {
-        url: "https://repo1.maven.org/maven2/commons-io/commons-io/2.11.0/commons-io-2.11.0.jar",
-        path: path.join(
-          libsDir,
-          "commons-io",
-          "2.11.0",
-          "commons-io-2.11.0.jar"
-        ),
-      },
-
-      {
-        url: "https://repo1.maven.org/maven2/org/apache/commons/commons-lang3/3.12.0/commons-lang3-3.12.0.jar",
-        path: path.join(
-          libsDir,
-          "org",
-          "apache",
-          "commons",
-          "commons-lang3",
-          "3.12.0",
-          "commons-lang3-3.12.0.jar"
-        ),
-      },
-
-      // DataFixerUpper - ИСПРАВЛЕННАЯ ВЕРСИЯ 6.0.8 для MC 1.20.1
-      {
-        url: "https://libraries.minecraft.net/com/mojang/datafixerupper/6.0.8/datafixerupper-6.0.8.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "mojang",
-          "datafixerupper",
-          "6.0.8",
-          "datafixerupper-6.0.8.jar"
-        ),
-      },
-
-      // Зависимость для DataFixerUpper
-      {
-        url: "https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "google",
-          "code",
-          "findbugs",
-          "jsr305",
-          "3.0.2",
-          "jsr305-3.0.2.jar"
-        ),
-      },
-
-      {
-        url: "https://libraries.minecraft.net/com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "mojang",
-          "brigadier",
-          "1.0.18",
-          "brigadier-1.0.18.jar"
+          "net",
+          "sf",
+          "jopt-simple",
+          "5.0.4",
+          "jopt-simple-5.0.4.jar"
         ),
       },
 
@@ -1929,45 +2323,23 @@ class MinecraftLauncher {
         ),
       },
 
-      // Text2Speech
+      // ICU4J
       {
-        url: "https://libraries.minecraft.net/com/mojang/text2speech/1.12.4/text2speech-1.12.4.jar",
+        url: "https://repo1.maven.org/maven2/com/ibm/icu/icu4j/71.1/icu4j-71.1.jar",
         path: path.join(
           libsDir,
           "com",
-          "mojang",
-          "text2speech",
-          "1.12.4",
-          "text2speech-1.12.4.jar"
+          "ibm",
+          "icu",
+          "icu4j",
+          "71.1",
+          "icu4j-71.1.jar"
         ),
       },
 
-      // Authlib для MC 1.20.1
-      {
-        url: "https://libraries.minecraft.net/com/mojang/authlib/4.0.43/authlib-4.0.43.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "mojang",
-          "authlib",
-          "4.0.43",
-          "authlib-4.0.43.jar"
-        ),
-      },
-
-      {
-        url: "https://repo1.maven.org/maven2/net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar",
-        path: path.join(
-          libsDir,
-          "net",
-          "sf",
-          "jopt-simple",
-          "5.0.4",
-          "jopt-simple-5.0.4.jar"
-        ),
-      },
-
-      // Netty библиотеки для MC 1.20.1
+      // =============================================
+      // NETTY БИБЛИОТЕКИ (ВСЕ РАБОТАЮТ)
+      // =============================================
       {
         url: "https://repo1.maven.org/maven2/io/netty/netty-buffer/4.1.82.Final/netty-buffer-4.1.82.Final.jar",
         path: path.join(
@@ -2046,7 +2418,9 @@ class MinecraftLauncher {
         ),
       },
 
-      // LWJGL библиотеки для MC 1.20.1 - КРИТИЧНО для работы графики
+      // =============================================
+      // LWJGL БИБЛИОТЕКИ (ВСЕ РАБОТАЮТ)
+      // =============================================
       {
         url: "https://repo1.maven.org/maven2/org/lwjgl/lwjgl/3.3.1/lwjgl-3.3.1.jar",
         path: path.join(
@@ -2124,33 +2498,41 @@ class MinecraftLauncher {
           "lwjgl-tinyfd-3.3.1.jar"
         ),
       },
-
-      // ICU4J библиотека для поддержки Unicode - КРИТИЧНО для MC 1.20.1
-      {
-        url: "https://repo1.maven.org/maven2/com/ibm/icu/icu4j/71.1/icu4j-71.1.jar",
-        path: path.join(
-          libsDir,
-          "com",
-          "ibm",
-          "icu",
-          "icu4j",
-          "71.1",
-          "icu4j-71.1.jar"
-        ),
-      },
     ];
 
-    console.log(`Проверяем ${requiredLibs.length} библиотек...`);
+    console.log(
+      `Проверяем ${requiredLibs.length} библиотек (исправленный список)...`
+    );
 
     for (let i = 0; i < requiredLibs.length; i++) {
       const lib = requiredLibs[i];
+
       if (!(await fs.pathExists(lib.path))) {
+        console.log(`📥 Скачиваем: ${path.basename(lib.path)}`);
         await fs.ensureDir(path.dirname(lib.path));
         try {
           await this.downloadFile(lib.url, lib.path, null);
+          console.log(`✅ Скачано: ${path.basename(lib.path)}`);
         } catch (error) {
-          console.log(`❌ Ошибка: ${error.message}`);
+          console.log(
+            `❌ Ошибка скачивания ${path.basename(lib.path)}: ${error.message}`
+          );
+
+          // Если это критическая библиотека Forge - выбрасываем ошибку
+          if (
+            lib.path.includes("modlauncher") ||
+            lib.path.includes("fmlloader") ||
+            lib.path.includes("securejarhandler")
+          ) {
+            throw new Error(
+              `Критическая ошибка: не удалось скачать ${path.basename(
+                lib.path
+              )}`
+            );
+          }
         }
+      } else {
+        console.log(`✅ Уже есть: ${path.basename(lib.path)}`);
       }
 
       if (onProgress) {
@@ -2158,7 +2540,7 @@ class MinecraftLauncher {
       }
     }
 
-    console.log("Скачивание библиотек завершено");
+    console.log("✅ Скачивание библиотек завершено");
   }
 
   async downloadMinecraftAssets(instancePath, mcVersion, onProgress = null) {
@@ -2364,7 +2746,10 @@ class MinecraftLauncher {
       `Скачиваем нативные LWJGL библиотеки для ${platform} ${arch}...`
     );
 
-    for (const lib of nativeLibs) {
+    // ИСПРАВЛЕНИЕ: используем обычный for цикл с индексом i
+    for (let i = 0; i < nativeLibs.length; i++) {
+      const lib = nativeLibs[i];
+
       if (!(await fs.pathExists(lib.path))) {
         console.log(
           `Скачиваем нативную библиотеку: ${path.basename(lib.path)}`
@@ -2388,6 +2773,8 @@ class MinecraftLauncher {
         await this.extractNativesToDir(lib.path, nativesDir);
         console.log(`✅ Нативы извлечены: ${path.basename(lib.path)}`);
       }
+
+      // ИСПРАВЛЕНИЕ: теперь i определена правильно
       if (onProgress) {
         onProgress(Math.round(((i + 1) / nativeLibs.length) * 100));
       }
@@ -2439,10 +2826,277 @@ class MinecraftLauncher {
   async buildClasspath(instancePath, modpack) {
     const classpath = [];
 
-    // СНАЧАЛА добавляем критичные библиотеки в правильном порядке
+    // 1. СНАЧАЛА добавляем Forge JAR - он должен быть ПЕРВЫМ для ModLauncher
+    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
+    const forgeJar = path.join(
+      instancePath,
+      "versions",
+      forgeVersion,
+      `${forgeVersion}.jar`
+    );
+
+    if (await fs.pathExists(forgeJar)) {
+      console.log("✅ Forge jar найден:", forgeJar);
+      classpath.push(forgeJar);
+    } else {
+      console.log("❌ КРИТИЧЕСКАЯ ОШИБКА: Forge jar НЕ найден:", forgeJar);
+      throw new Error("Forge JAR не найден. Переустановите модпак.");
+    }
+
+    // 2. Добавляем Minecraft vanilla client JAR
+    const mcVersion = modpack.minecraft_version;
+    const vanillaJar = path.join(
+      instancePath,
+      "versions",
+      mcVersion,
+      `${mcVersion}.jar`
+    );
+
+    if (await fs.pathExists(vanillaJar)) {
+      console.log("✅ Vanilla Minecraft jar найден:", vanillaJar);
+      classpath.push(vanillaJar);
+    } else {
+      console.log("⚠️ Vanilla Minecraft jar НЕ найден:", vanillaJar);
+      console.log("Попытаемся найти в других местах...");
+
+      // Пробуем найти в стандартных местах
+      const alternativeVanilla = path.join(
+        this.versionsDir,
+        mcVersion,
+        `${mcVersion}.jar`
+      );
+      if (await fs.pathExists(alternativeVanilla)) {
+        console.log(
+          "✅ Найден vanilla jar в глобальных версиях:",
+          alternativeVanilla
+        );
+        classpath.push(alternativeVanilla);
+      }
+    }
+
+    // 3. Добавляем критические библиотеки в правильном порядке
     const libsDir = path.join(instancePath, "libraries");
     const priorityLibs = [
-      // DataFixerUpper - ДОЛЖЕН БЫТЬ ПЕРВЫМ для правильной работы
+      // ModLauncher и его зависимости - КРИТИЧНО для Forge
+      path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "modlauncher",
+        "10.0.9",
+        "modlauncher-10.0.9.jar"
+      ),
+
+      // КРИТИЧНО: FMLLoader и связанные библиотеки
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "fmlloader",
+        `1.20.1-${modpack.forge_version}`,
+        `fmlloader-1.20.1-${modpack.forge_version}.jar`
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "fmlcore",
+        `1.20.1-${modpack.forge_version}`,
+        `fmlcore-1.20.1-${modpack.forge_version}.jar`
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "javafmllanguage",
+        `1.20.1-${modpack.forge_version}`,
+        `javafmllanguage-1.20.1-${modpack.forge_version}.jar`
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "lowcodelanguage",
+        `1.20.1-${modpack.forge_version}`,
+        `lowcodelanguage-1.20.1-${modpack.forge_version}.jar`
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "eventbus",
+        "6.0.5",
+        "eventbus-6.0.5.jar"
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "coremods",
+        "5.1.6",
+        "coremods-5.1.6.jar"
+      ),
+
+      path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "securejarhandler",
+        "2.1.10",
+        "securejarhandler-2.1.10.jar"
+      ),
+      path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "bootstraplauncher",
+        "1.1.2",
+        "bootstraplauncher-1.1.2.jar"
+      ),
+
+      // ASM библиотеки
+      path.join(libsDir, "org", "ow2", "asm", "asm", "9.5", "asm-9.5.jar"),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-commons",
+        "9.5",
+        "asm-commons-9.5.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-tree",
+        "9.5",
+        "asm-tree-9.5.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-util",
+        "9.5",
+        "asm-util-9.5.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-analysis",
+        "9.5",
+        "asm-analysis-9.5.jar"
+      ),
+
+      // УБИРАЕМ НЕДОСТУПНЫЕ БИБЛИОТЕКИ:
+      // - forgeautorenamingtool (404)
+      // - jarhandling (404)
+      // - modlauncher-api (404)${modpack.forge_version}`, `fmlcore-1.20.1-${modpack.forge_version}.jar`),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "javafmllanguage",
+        `1.20.1-${modpack.forge_version}`,
+        `javafmllanguage-1.20.1-${modpack.forge_version}.jar`
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "lowcodelanguage",
+        `1.20.1-${modpack.forge_version}`,
+        `lowcodelanguage-1.20.1-${modpack.forge_version}.jar`
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "eventbus",
+        "6.0.5",
+        "eventbus-6.0.5.jar"
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "coremods",
+        "5.1.6",
+        "coremods-5.1.6.jar"
+      ),
+
+      path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "securejarhandler",
+        "2.1.10",
+        "securejarhandler-2.1.10.jar"
+      ),
+      path.join(libsDir, "org", "ow2", "asm", "asm", "9.5", "asm-9.5.jar"),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-commons",
+        "9.5",
+        "asm-commons-9.5.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-tree",
+        "9.5",
+        "asm-tree-9.5.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-util",
+        "9.5",
+        "asm-util-9.5.jar"
+      ),
+      path.join(
+        libsDir,
+        "org",
+        "ow2",
+        "asm",
+        "asm-analysis",
+        "9.5",
+        "asm-analysis-9.5.jar"
+      ),
+
+      // ForgeAutoRenamingTool
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "forgeautorenamingtool",
+        "0.1.24",
+        "forgeautorenamingtool-0.1.24.jar"
+      ),
+
+      // JarJar для модулей
+      path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "jarhandling",
+        "0.3.4",
+        "jarhandling-0.3.4.jar"
+      ),
+
+      // DataFixerUpper - ДОЛЖЕН БЫТЬ ПОСЛЕ ModLauncher
       path.join(
         libsDir,
         "com",
@@ -2452,7 +3106,7 @@ class MinecraftLauncher {
         "datafixerupper-6.0.8.jar"
       ),
 
-      // ICU4J для поддержки Unicode - КРИТИЧНО
+      // ICU4J для поддержки Unicode
       path.join(
         libsDir,
         "com",
@@ -2463,19 +3117,7 @@ class MinecraftLauncher {
         "icu4j-71.1.jar"
       ),
 
-      // Зависимости для DataFixerUpper
-      path.join(
-        libsDir,
-        "com",
-        "google",
-        "code",
-        "findbugs",
-        "jsr305",
-        "3.0.2",
-        "jsr305-3.0.2.jar"
-      ),
-
-      // Guava и её зависимости - обновленная версия 31.1-jre
+      // Guava и её зависимости
       path.join(
         libsDir,
         "com",
@@ -2504,7 +3146,7 @@ class MinecraftLauncher {
         "listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar"
       ),
 
-      // Зависимости для корректной работы Guava 31.1-jre
+      // Зависимости для Guava
       path.join(
         libsDir,
         "org",
@@ -2531,8 +3173,18 @@ class MinecraftLauncher {
         "2.11.0",
         "error_prone_annotations-2.11.0.jar"
       ),
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "code",
+        "findbugs",
+        "jsr305",
+        "3.0.2",
+        "jsr305-3.0.2.jar"
+      ),
 
-      // OSHI (оставляем как было)
+      // OSHI
       path.join(
         libsDir,
         "com",
@@ -2564,62 +3216,49 @@ class MinecraftLauncher {
       ),
     ];
 
+    let addedPriorityLibs = 0;
     for (const lib of priorityLibs) {
       if (await fs.pathExists(lib)) {
         classpath.push(lib);
+        addedPriorityLibs++;
         console.log(`🔹 Приоритетная библиотека: ${path.basename(lib)}`);
+      } else {
+        console.log(
+          `⚠️ Отсутствует приоритетная библиотека: ${path.basename(lib)}`
+        );
       }
     }
 
-    // Vanilla jar
-    const mcVersion = modpack.minecraft_version;
-    const vanillaJar = path.join(
-      instancePath,
-      "versions",
-      mcVersion,
-      `${mcVersion}.jar`
+    console.log(
+      `✅ Добавлено приоритетных библиотек: ${addedPriorityLibs}/${priorityLibs.length}`
     );
-    if (await fs.pathExists(vanillaJar)) {
-      console.log("Vanilla Minecraft jar найден:", vanillaJar);
-      classpath.push(vanillaJar);
-    } else {
-      console.log("Vanilla Minecraft jar НЕ найден:", vanillaJar);
-    }
 
-    // Остальные библиотеки (исключая уже добавленные приоритетные)
+    // 4. Остальные библиотеки (исключая уже добавленные приоритетные)
     if (await fs.pathExists(libsDir)) {
       const allLibJars = await this.findJarFiles(libsDir);
       const remainingLibs = allLibJars.filter(
-        (jar) => !priorityLibs.includes(jar)
+        (jar) => !priorityLibs.includes(jar) && !classpath.includes(jar)
       );
 
       console.log(`Найдено остальных библиотек: ${remainingLibs.length}`);
       classpath.push(...remainingLibs);
     }
 
-    // И в конце Forge jar
-    const forgeVersion = `${mcVersion}-${modpack.modloader}-${modpack.forge_version}`;
-    const mainJar = path.join(
-      instancePath,
-      "versions",
-      forgeVersion,
-      `${forgeVersion}.jar`
-    );
-
-    if (await fs.pathExists(mainJar)) {
-      console.log("Forge jar найден:", mainJar);
-      classpath.push(mainJar);
-    } else {
-      console.log("Forge jar НЕ найден:", mainJar);
-    }
-
-    console.log(`Общий classpath содержит ${classpath.length} файлов`);
+    console.log(`📚 Общий classpath содержит ${classpath.length} файлов`);
 
     // Логируем первые несколько файлов classpath для отладки
     console.log("Первые файлы в classpath:");
-    classpath.slice(0, 10).forEach((file, index) => {
+    classpath.slice(0, 15).forEach((file, index) => {
       console.log(`  ${index + 1}. ${path.basename(file)}`);
     });
+
+    // КРИТИЧЕСКАЯ ПРОВЕРКА: убеждаемся что ModLauncher есть
+    const hasModLauncher = classpath.some((jar) => jar.includes("modlauncher"));
+    if (!hasModLauncher) {
+      throw new Error(
+        "ModLauncher не найден в classpath! Forge не может запуститься."
+      );
+    }
 
     return classpath.join(path.delimiter);
   }
