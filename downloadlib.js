@@ -151,6 +151,45 @@ async function downloadMissingLibraries(
       ),
     },
 
+    // ДОБАВИТЬ: ForgeAutoRenamingTool через альтернативную ссылку
+    {
+      url: "https://repo1.maven.org/maven2/net/md-5/SpecialSource/1.11.0/SpecialSource-1.11.0.jar",
+      path: path.join(
+        libsDir,
+        "net",
+        "md-5",
+        "SpecialSource",
+        "1.11.0",
+        "SpecialSource-1.11.0.jar"
+      ),
+    },
+
+    // КРИТИЧНО: MLLoader API
+    {
+      url: "https://maven.minecraftforge.net/cpw/mods/modlauncher-api/10.0.1/modlauncher-api-10.0.1.jar",
+      path: path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "modlauncher-api",
+        "10.0.1",
+        "modlauncher-api-10.0.1.jar"
+      ),
+    },
+
+    // Mixin - КРИТИЧНО для модов
+    {
+      url: "https://repo1.maven.org/maven2/org/spongepowered/mixin/0.8.5/mixin-0.8.5.jar",
+      path: path.join(
+        libsDir,
+        "org",
+        "spongepowered",
+        "mixin",
+        "0.8.5",
+        "mixin-0.8.5.jar"
+      ),
+    },
+
     // УБИРАЕМ НЕДОСТУПНЫЕ БИБЛИОТЕКИ:
     // - mcp_config (404)
     // - jarhandling (404)
@@ -897,7 +936,7 @@ async function downloadNativeLibraries(
       }
     } else {
       // Если библиотека уже есть, извлекаем нативы
-      await this.extractNativesToDir(lib.path, nativesDir);
+      await launcher.extractNativesToDir(lib.path, nativesDir);
       console.log(`✅ Нативы извлечены: ${path.basename(lib.path)}`);
     }
 

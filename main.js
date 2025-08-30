@@ -771,7 +771,6 @@ class MinecraftLauncher {
       "-Dminecraft.launcher.version=2.1",
 
       // Заставляем authlib использовать offline режим
-      "-Dcom.mojang.authlib.GameProfile.OFFLINE=true",
       "-Dcom.mojang.authlib.legacy=true",
 
       // Полностью отключаем все хосты через /etc/hosts эмуляцию
@@ -828,10 +827,10 @@ class MinecraftLauncher {
 
     if (modpack.modloader === "forge") {
       args.push(
-        "-DforgeLoadingContext=true",
         "-Dfml.forgeVersion=" + modpack.forge_version,
         "-Dfml.mcVersion=" + modpack.minecraft_version,
-        "-Dfml.majorVersion=47"
+        "-Dfml.forgeGroup=net.minecraftforge",
+        "-Dfml.mcpVersion=20230612.114412"
       );
     }
 
@@ -877,6 +876,26 @@ class MinecraftLauncher {
 
       console.log("Authlib заменён на фиктивную версию");
     }
+  }
+
+  async createForgeLaunchServices(instancePath, modpack) {
+    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
+    const forgeDir = path.join(instancePath, "versions", forgeVersion);
+    const servicesDir = path.join(forgeDir, "META-INF", "services");
+
+    await fs.ensureDir(servicesDir);
+
+    // Создаем LaunchService для fmlclient
+    const launchServiceFile = path.join(
+      servicesDir,
+      "cpw.mods.modlauncher.api.ILaunchHandlerService"
+    );
+    const launchServiceContent =
+      "net.minecraftforge.client.loading.ClientModLoader";
+
+    await fs.writeFile(launchServiceFile, launchServiceContent);
+
+    console.log("✅ Создан LaunchService для Forge");
   }
 
   async startMockAuthServer() {
@@ -1129,6 +1148,17 @@ class MinecraftLauncher {
         "10.0.9",
         "modlauncher-10.0.9.jar"
       ),
+
+      // ModLauncher API
+      path.join(
+        libsDir,
+        "cpw",
+        "mods",
+        "modlauncher-api",
+        "10.0.1",
+        "modlauncher-api-10.0.1.jar"
+      ),
+
       path.join(
         libsDir,
         "cpw",
@@ -1635,6 +1665,45 @@ class MinecraftLauncher {
     }
   }
 
+  async createForgeMetaInf(instancePath, modpack) {
+    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
+    const forgeJarPath = path.join(
+      instancePath,
+      "versions",
+      forgeVersion,
+      `${forgeVersion}.jar`
+    );
+
+    // Создаем временную директорию для модификации JAR
+    const tempDir = path.join(this.tempDir, "forge_services");
+    await fs.ensureDir(tempDir);
+
+    const servicesDir = path.join(tempDir, "META-INF", "services");
+    await fs.ensureDir(servicesDir);
+
+    // Создаем файл LaunchHandlerService
+    const launchHandlerFile = path.join(
+      servicesDir,
+      "cpw.mods.modlauncher.api.ILaunchHandlerService"
+    );
+    await fs.writeFile(
+      launchHandlerFile,
+      "net.minecraftforge.client.loading.ClientModLoader"
+    );
+
+    // Создаем файл TransformationService
+    const transformServiceFile = path.join(
+      servicesDir,
+      "cpw.mods.modlauncher.api.ITransformationService"
+    );
+    await fs.writeFile(
+      transformServiceFile,
+      "net.minecraftforge.fml.loading.FMLLoader"
+    );
+
+    console.log("✅ Созданы META-INF services для Forge");
+  }
+
   /**
    * Обновленная функция запуска с дополнительной настройкой offline режима
    */
@@ -1662,6 +1731,8 @@ class MinecraftLauncher {
 
     // ДОБАВЛЯЕМ настройку offline режима
     await this.setupOfflineMode(instancePath);
+    await this.createForgeMetaInf(instancePath, modpack);
+    await this.createForgeLaunchServices(instancePath, modpack);
     await this.downloadVanillaClient(instancePath, modpack.minecraft_version);
 
     // Убеждаемся что Java доступна
@@ -1715,16 +1786,11 @@ class MinecraftLauncher {
       "-Dminecraft.launcher.brand=minecraft-launcher",
       "-Dminecraft.launcher.version=2.1.184",
 
-      // ДОБАВЛЯЕМ критически важные свойства для ModLauncher и FMLLoader
-      "-DforgeLoadingContext=true",
-      `-Dfml.forgeVersion=${modpack.forge_version}`,
-      `-Dfml.mcVersion=${modpack.minecraft_version}`,
-      "-Dfml.majorVersion=47",
-
       // КРИТИЧНО: указываем ModLauncher что запускать
       "-DmodLauncher.gameDir=" + instancePath,
       "-DignoreList=bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client,fmlcore,javafmlmod,lowcodelanguage,mixin,forge",
-
+      "-Dfml.forgeGroup=net.minecraftforge",
+      "-Dfml.mcpVersion=20230612.114412",
       // Для правильной работы FMLLoader
       "-Dnet.minecraftforge.fml.loading.moddiscovery.modsFolder=" +
         path.join(instancePath, "mods"),
@@ -1755,7 +1821,7 @@ class MinecraftLauncher {
 
       // ДОБАВЛЯЕМ специфичные для Forge аргументы
       "--launchTarget",
-      "forgeclient",
+      "fmlclient",
     ];
 
     const allArgs = [...finalJvmArgs, ...gameArgs];
@@ -2127,24 +2193,24 @@ class MinecraftLauncher {
         "asm-analysis-9.5.jar"
       ),
 
-      // ForgeAutoRenamingTool
+      // Mixin поддержка
+      path.join(
+        libsDir,
+        "org",
+        "spongepowered",
+        "mixin",
+        "0.8.5",
+        "mixin-0.8.5.jar"
+      ),
+
+      // SpecialSource для ремаппинга
       path.join(
         libsDir,
         "net",
-        "minecraftforge",
-        "forgeautorenamingtool",
-        "0.1.24",
-        "forgeautorenamingtool-0.1.24.jar"
-      ),
-
-      // JarJar для модулей
-      path.join(
-        libsDir,
-        "cpw",
-        "mods",
-        "jarhandling",
-        "0.3.4",
-        "jarhandling-0.3.4.jar"
+        "md-5",
+        "SpecialSource",
+        "1.11.0",
+        "SpecialSource-1.11.0.jar"
       ),
 
       // DataFixerUpper - ДОЛЖЕН БЫТЬ ПОСЛЕ ModLauncher
