@@ -779,9 +779,10 @@ class MinecraftLauncher {
       "-Dfml.ignorePatchDiscrepancies=true",
     ];
 
-    // Java модули
+    // ИСПРАВЛЕННЫЕ Java модули для решения проблемы с ASM
     if (javaMainVersion >= 17) {
       args.push(
+        // Основные модули
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
@@ -793,10 +794,19 @@ class MinecraftLauncher {
         "--add-opens=java.base/java.io=ALL-UNNAMED",
         "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
 
-        // КРИТИЧНО для решения проблемы с ASM модулями:
-        "--add-reads=ALL-UNNAMED=ALL-SYSTEM",
+        // КРИТИЧНО: решение проблемы с ASM модулями
         "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
-        "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"
+        "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
+
+        // НОВОЕ: исправляем конфликт с org.objectweb.asm
+        "--add-modules=ALL-SYSTEM",
+        "--add-reads=ALL-UNNAMED=ALL-SYSTEM",
+
+        // ОТКЛЮЧАЕМ проблемные модули которые конфликтуют с ASM
+        "--limit-modules=java.base,java.logging,java.xml,java.desktop,java.management,java.security.jgss,java.instrument,java.naming,java.prefs,java.sql,java.datatransfer,java.rmi",
+
+        // Явно разрешаем доступ к ASM классам
+        "--add-exports=java.base/jdk.internal.loader=ALL-UNNAMED"
       );
 
       if (modloader === "forge" || modloader === "neoforge") {
@@ -804,17 +814,17 @@ class MinecraftLauncher {
           "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
           "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
           "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
-          "--add-opens=java.base/java.lang.module=ALL-UNNAMED"
+          "--add-opens=java.base/java.lang.module=ALL-UNNAMED",
+
+          // ДОПОЛНИТЕЛЬНО для Forge
+          "--add-opens=java.base/java.text=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.regex=ALL-UNNAMED"
         );
       }
     }
 
     if (javaMainVersion >= 21) {
-      args.push(
-        "-XX:+EnableDynamicAgentLoading",
-        "--add-opens=java.base/java.text=ALL-UNNAMED",
-        "--add-opens=java.base/java.util.regex=ALL-UNNAMED"
-      );
+      args.push("-XX:+EnableDynamicAgentLoading");
     }
 
     if (os.platform() === "win32") {
@@ -988,7 +998,11 @@ class MinecraftLauncher {
    */
   getMainClass(modpack) {
     if (modpack.modloader === "forge") {
-      return "cpw.mods.bootstraplauncher.BootstrapLauncher"; // ИЗМЕНИТЬ
+      // ВАРИАНТ 1: Используем ModLauncher напрямую (обходим BootstrapLauncher)
+      return "cpw.mods.modlauncher.Launcher";
+
+      // ВАРИАНТ 2: Если не работает, раскомментируйте эту строку:
+      // return "cpw.mods.bootstraplauncher.BootstrapLauncher";
     }
     return "net.minecraft.client.main.Main";
   }
