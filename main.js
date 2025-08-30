@@ -733,38 +733,32 @@ class MinecraftLauncher {
     let args = [
       `-Xmx${modpack.memory}`,
       "-Xms1G",
-      "--add-opens=java.base/java.lang=ALL-UNNAMED",
-      "--add-opens=java.base/java.util=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
-      "--add-opens=java.base/java.security=ALL-UNNAMED",
-      "--add-opens=java.base/java.net=ALL-UNNAMED",
       "-XX:+UseG1GC",
       "-Dlog4j2.formatMsgNoLookups=true",
+      "-Dfml.earlyprogresswindow=false",
     ];
 
-    // Для Java 17+ добавляем необходимые флаги для модлоадеров
-    /*if (javaMainVersion >= 17) {
-      // Отключаем систему модулей полностью
+    // Для Java 17+ добавляем необходимые модульные флаги
+    if (javaMainVersion >= 17) {
       args.push(
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-        "--add-opens=java.base/java.text=ALL-UNNAMED",
-        "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
         "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
       );
 
+      // Дополнительные флаги для Forge
       if (modloader === "forge" || modloader === "neoforge") {
         args.push(
-          "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-          "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
           "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
-          "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"
+          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED"
         );
       }
-    }*/
+    }
 
     // Системные свойства
     args.push(
@@ -772,9 +766,7 @@ class MinecraftLauncher {
         /\s/g,
         "_"
       )}`,
-      "-Dminecraft.launcher.version=1.0.0",
-      "-Dfml.earlyprogresswindow=false",
-      "-Dlog4j2.formatMsgNoLookups=true"
+      "-Dminecraft.launcher.version=1.0.0"
     );
 
     if (os.platform() === "win32") {
@@ -1137,7 +1129,7 @@ class MinecraftLauncher {
     const libsDir = path.join(instancePath, "libraries");
     await fs.ensureDir(libsDir);
 
-    // Список критически важных библиотек для MC 1.20.1 + Forge + 1.21
+    // Список критически важных библиотек для MC 1.20.1 + Forge 47.3.33
     const requiredLibs = [
       // Mojang logging
       {
@@ -1151,6 +1143,50 @@ class MinecraftLauncher {
           "logging-1.1.1.jar"
         ),
       },
+
+      // OSHI для системной информации
+      {
+        url: "https://repo1.maven.org/maven2/com/github/oshi/oshi-core/6.4.0/oshi-core-6.4.0.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "github",
+          "oshi",
+          "oshi-core",
+          "6.4.0",
+          "oshi-core-6.4.0.jar"
+        ),
+      },
+
+      // JNA для OSHI
+      {
+        url: "https://repo1.maven.org/maven2/net/java/dev/jna/jna/5.12.1/jna-5.12.1.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "java",
+          "dev",
+          "jna",
+          "jna",
+          "5.12.1",
+          "jna-5.12.1.jar"
+        ),
+      },
+
+      {
+        url: "https://repo1.maven.org/maven2/net/java/dev/jna/jna-platform/5.12.1/jna-platform-5.12.1.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "java",
+          "dev",
+          "jna",
+          "jna-platform",
+          "5.12.1",
+          "jna-platform-5.12.1.jar"
+        ),
+      },
+
       // ASM
       {
         url: "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.5/asm-9.5.jar",
@@ -1266,15 +1302,43 @@ class MinecraftLauncher {
           "fastutil-8.5.9.jar"
         ),
       },
+      // Guava - используем более новую версию для совместимости
       {
-        url: "https://repo1.maven.org/maven2/com/google/guava/guava/31.0.1-jre/guava-31.0.1-jre.jar",
+        url: "https://repo1.maven.org/maven2/com/google/guava/guava/32.1.2-jre/guava-32.1.2-jre.jar",
         path: path.join(
           libsDir,
           "com",
           "google",
           "guava",
-          "31.0.1-jre",
-          "guava-31.0.1-jre.jar"
+          "32.1.2-jre",
+          "guava-32.1.2-jre.jar"
+        ),
+      },
+
+      // Вспомогательные библиотеки для Guava
+      {
+        url: "https://repo1.maven.org/maven2/com/google/guava/failureaccess/1.0.1/failureaccess-1.0.1.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "guava",
+          "failureaccess",
+          "1.0.1",
+          "failureaccess-1.0.1.jar"
+        ),
+      },
+
+      {
+        url: "https://repo1.maven.org/maven2/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "guava",
+          "listenablefuture",
+          "9999.0-empty-to-avoid-conflict-with-guava",
+          "listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar"
         ),
       },
       {
@@ -1361,30 +1425,117 @@ class MinecraftLauncher {
         ),
       },
 
-      // Новые библиотеки для 1.20+ и 1.21
+      // ИСПРАВЛЕННЫЕ библиотеки для MC 1.20.1
+      // Используем правильную версию authlib 4.0.43 для MC 1.20.1
       {
-        url: "https://repo.maven.apache.org/maven2/com/mojang/authlib/minecraft/3.6.49/authlib-minecraft-3.6.49.jar",
+        url: "https://libraries.minecraft.net/com/mojang/authlib/4.0.43/authlib-4.0.43.jar",
         path: path.join(
           libsDir,
           "com",
           "mojang",
-          "authlib-minecraft",
-          "3.6.49",
-          "authlib-minecraft-3.6.49.jar"
+          "authlib",
+          "4.0.43",
+          "authlib-4.0.43.jar"
+        ),
+      },
+
+      // Убираем authlib-minecraft - эта библиотека не существует в таком виде
+      // Убираем telemetry - эта библиотека не нужна для Forge
+
+      // Добавляем недостающие критичные библиотеки для Forge 47.3.33
+      {
+        url: "https://repo1.maven.org/maven2/net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar",
+        path: path.join(
+          libsDir,
+          "net",
+          "sf",
+          "jopt-simple",
+          "5.0.4",
+          "jopt-simple-5.0.4.jar"
+        ),
+      },
+
+      // Netty библиотеки для MC 1.20.1 (используем модульную версию вместо netty-all)
+      {
+        url: "https://repo1.maven.org/maven2/io/netty/netty-buffer/4.1.82.Final/netty-buffer-4.1.82.Final.jar",
+        path: path.join(
+          libsDir,
+          "io",
+          "netty",
+          "netty-buffer",
+          "4.1.82.Final",
+          "netty-buffer-4.1.82.Final.jar"
         ),
       },
       {
-        url: "https://repo.maven.apache.org/maven2/com/mojang/telemetry/1.0.1/telemetry-1.0.1.jar",
+        url: "https://repo1.maven.org/maven2/io/netty/netty-codec/4.1.82.Final/netty-codec-4.1.82.Final.jar",
         path: path.join(
           libsDir,
-          "com",
-          "mojang",
-          "telemetry",
-          "1.0.1",
-          "telemetry-1.0.1.jar"
+          "io",
+          "netty",
+          "netty-codec",
+          "4.1.82.Final",
+          "netty-codec-4.1.82.Final.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/io/netty/netty-common/4.1.82.Final/netty-common-4.1.82.Final.jar",
+        path: path.join(
+          libsDir,
+          "io",
+          "netty",
+          "netty-common",
+          "4.1.82.Final",
+          "netty-common-4.1.82.Final.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/io/netty/netty-handler/4.1.82.Final/netty-handler-4.1.82.Final.jar",
+        path: path.join(
+          libsDir,
+          "io",
+          "netty",
+          "netty-handler",
+          "4.1.82.Final",
+          "netty-handler-4.1.82.Final.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/io/netty/netty-resolver/4.1.82.Final/netty-resolver-4.1.82.Final.jar",
+        path: path.join(
+          libsDir,
+          "io",
+          "netty",
+          "netty-resolver",
+          "4.1.82.Final",
+          "netty-resolver-4.1.82.Final.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/io/netty/netty-transport/4.1.82.Final/netty-transport-4.1.82.Final.jar",
+        path: path.join(
+          libsDir,
+          "io",
+          "netty",
+          "netty-transport",
+          "4.1.82.Final",
+          "netty-transport-4.1.82.Final.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/io/netty/netty-transport-native-epoll/4.1.82.Final/netty-transport-native-epoll-4.1.82.Final.jar",
+        path: path.join(
+          libsDir,
+          "io",
+          "netty",
+          "netty-transport-native-epoll",
+          "4.1.82.Final",
+          "netty-transport-native-epoll-4.1.82.Final.jar"
         ),
       },
     ];
+
+    console.log(`Проверяем ${requiredLibs.length} библиотек...`);
 
     for (const lib of requiredLibs) {
       if (!(await fs.pathExists(lib.path))) {
@@ -1392,15 +1543,91 @@ class MinecraftLauncher {
         await fs.ensureDir(path.dirname(lib.path));
         try {
           await this.downloadFile(lib.url, lib.path, null);
+          console.log(`✅ Успешно скачано: ${path.basename(lib.path)}`);
         } catch (error) {
-          console.log(`Ошибка скачивания ${lib.url}:`, error.message);
+          console.log(`❌ Ошибка скачивания ${lib.url}: ${error.message}`);
+          // Не прерываем процесс, продолжаем скачивать другие библиотеки
         }
+      } else {
+        console.log(`✅ Уже есть: ${path.basename(lib.path)}`);
       }
     }
+
+    console.log("Скачивание библиотек завершено");
   }
 
   async buildClasspath(instancePath, modpack) {
     const classpath = [];
+
+    // СНАЧАЛА добавляем наши критичные библиотеки (чтобы они имели приоритет)
+    const libsDir = path.join(instancePath, "libraries");
+    const priorityLibs = [
+      // Guava и её зависимости - добавляем первыми для приоритета
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "guava",
+        "failureaccess",
+        "1.0.1",
+        "failureaccess-1.0.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "guava",
+        "guava",
+        "32.1.2-jre",
+        "guava-32.1.2-jre.jar"
+      ),
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "guava",
+        "listenablefuture",
+        "9999.0-empty-to-avoid-conflict-with-guava",
+        "listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar"
+      ),
+      // OSHI
+      path.join(
+        libsDir,
+        "com",
+        "github",
+        "oshi",
+        "oshi-core",
+        "6.4.0",
+        "oshi-core-6.4.0.jar"
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "java",
+        "dev",
+        "jna",
+        "jna",
+        "5.12.1",
+        "jna-5.12.1.jar"
+      ),
+      path.join(
+        libsDir,
+        "net",
+        "java",
+        "dev",
+        "jna",
+        "jna-platform",
+        "5.12.1",
+        "jna-platform-5.12.1.jar"
+      ),
+    ];
+
+    for (const lib of priorityLibs) {
+      if (await fs.pathExists(lib)) {
+        classpath.push(lib);
+        console.log(`🔹 Приоритетная библиотека: ${path.basename(lib)}`);
+      }
+    }
 
     // Vanilla jar
     const mcVersion = modpack.minecraft_version;
@@ -1417,23 +1644,15 @@ class MinecraftLauncher {
       console.log("Vanilla Minecraft jar НЕ найден:", vanillaJar);
     }
 
-    // Библиотеки
-    const libsDir = path.join(instancePath, "libraries");
+    // Остальные библиотеки (исключая уже добавленные приоритетные)
     if (await fs.pathExists(libsDir)) {
-      const libJars = await this.findJarFiles(libsDir);
-      console.log(`Найдено библиотек: ${libJars.length}`);
-
-      // ВСТАВЬТЕ ЭТИ СТРОКИ СЮДА:
-      const mojangLibs = libJars.filter(
-        (jar) =>
-          jar.includes("mojang") ||
-          jar.includes("logging") ||
-          jar.includes("authlib") ||
-          jar.includes("datafixerupper")
+      const allLibJars = await this.findJarFiles(libsDir);
+      const remainingLibs = allLibJars.filter(
+        (jar) => !priorityLibs.includes(jar)
       );
-      console.log("Найдены Mojang библиотеки:", mojangLibs);
 
-      classpath.push(...libJars);
+      console.log(`Найдено остальных библиотек: ${remainingLibs.length}`);
+      classpath.push(...remainingLibs);
     }
 
     // И в конце Forge jar
