@@ -733,16 +733,19 @@ class MinecraftLauncher {
     let args = [
       `-Xmx${modpack.memory}`,
       "-Xms1G",
-      "-XX:+UnlockExperimentalVMOptions",
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+      "--add-opens=java.base/java.security=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
       "-XX:+UseG1GC",
-      "-XX:G1NewSizePercent=20",
-      "-XX:G1ReservePercent=20",
-      "-XX:MaxGCPauseMillis=50",
-      "-XX:G1HeapRegionSize=32M",
+      "-Dlog4j2.formatMsgNoLookups=true",
     ];
 
     // Для Java 17+ добавляем необходимые флаги для модлоадеров
-    if (javaMainVersion >= 17) {
+    /*if (javaMainVersion >= 17) {
       // Отключаем систему модулей полностью
       args.push(
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
@@ -761,7 +764,7 @@ class MinecraftLauncher {
           "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"
         );
       }
-    }
+    }*/
 
     // Системные свойства
     args.push(
@@ -785,9 +788,7 @@ class MinecraftLauncher {
    * Определяет главный класс для современных модлоадеров
    */
   getMainClass(modpack) {
-    const modloader = modpack.modloader.toLowerCase();
-
-    // Для проблемных модпаков используем обычный клиент
+    // Используем обычный клиент вместо Forge bootstrap для Java 21
     return "net.minecraft.client.main.Main";
   }
 
@@ -1070,6 +1071,7 @@ class MinecraftLauncher {
       { ...modpack, memory },
       javaInfo.majorVersion
     );
+    await this.downloadMissingLibraries(instancePath, modpack);
     const classpath = await this.buildClasspath(instancePath, modpack);
 
     jvmArgs.push(
@@ -1131,19 +1133,310 @@ class MinecraftLauncher {
     return minecraft;
   }
 
+  async downloadMissingLibraries(instancePath, modpack) {
+    const libsDir = path.join(instancePath, "libraries");
+    await fs.ensureDir(libsDir);
+
+    // Список критически важных библиотек для MC 1.20.1 + Forge + 1.21
+    const requiredLibs = [
+      // Mojang logging
+      {
+        url: "https://libraries.minecraft.net/com/mojang/logging/1.1.1/logging-1.1.1.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "logging",
+          "1.1.1",
+          "logging-1.1.1.jar"
+        ),
+      },
+      // ASM
+      {
+        url: "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.5/asm-9.5.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "ow2",
+          "asm",
+          "asm",
+          "9.5",
+          "asm-9.5.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-tree/9.5/asm-tree-9.5.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "ow2",
+          "asm",
+          "asm-tree",
+          "9.5",
+          "asm-tree-9.5.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-commons/9.5/asm-commons-9.5.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "ow2",
+          "asm",
+          "asm-commons",
+          "9.5",
+          "asm-commons-9.5.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-analysis/9.5/asm-analysis-9.5.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "ow2",
+          "asm",
+          "asm-analysis",
+          "9.5",
+          "asm-analysis-9.5.jar"
+        ),
+      },
+
+      // SLF4J & Log4J
+      {
+        url: "https://repo1.maven.org/maven2/org/slf4j/slf4j-api/1.8.0-beta4/slf4j-api-1.8.0-beta4.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "slf4j",
+          "slf4j-api",
+          "1.8.0-beta4",
+          "slf4j-api-1.8.0-beta4.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-slf4j18-impl/2.17.0/log4j-slf4j18-impl-2.17.0.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "apache",
+          "logging",
+          "log4j",
+          "log4j-slf4j18-impl",
+          "2.17.0",
+          "log4j-slf4j18-impl-2.17.0.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-api/2.17.0/log4j-api-2.17.0.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "apache",
+          "logging",
+          "log4j",
+          "log4j-api",
+          "2.17.0",
+          "log4j-api-2.17.0.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-core/2.17.0/log4j-core-2.17.0.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "apache",
+          "logging",
+          "log4j",
+          "log4j-core",
+          "2.17.0",
+          "log4j-core-2.17.0.jar"
+        ),
+      },
+
+      // FastUtil, Guava, Gson, Commons IO / Lang
+      {
+        url: "https://repo1.maven.org/maven2/it/unimi/dsi/fastutil/8.5.9/fastutil-8.5.9.jar",
+        path: path.join(
+          libsDir,
+          "it",
+          "unimi",
+          "dsi",
+          "fastutil",
+          "8.5.9",
+          "fastutil-8.5.9.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/com/google/guava/guava/31.0.1-jre/guava-31.0.1-jre.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "guava",
+          "31.0.1-jre",
+          "guava-31.0.1-jre.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/com/google/code/gson/gson/2.8.9/gson-2.8.9.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "code",
+          "gson",
+          "2.8.9",
+          "gson-2.8.9.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/commons-io/commons-io/2.11.0/commons-io-2.11.0.jar",
+        path: path.join(
+          libsDir,
+          "commons-io",
+          "2.11.0",
+          "commons-io-2.11.0.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/apache/commons/commons-lang3/3.12.0/commons-lang3-3.12.0.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "apache",
+          "commons",
+          "commons-lang3",
+          "3.12.0",
+          "commons-lang3-3.12.0.jar"
+        ),
+      },
+
+      // DataFixerUpper, Brigadier
+      {
+        url: "https://libraries.minecraft.net/com/mojang/datafixerupper/5.0.28/datafixerupper-5.0.28.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "datafixerupper",
+          "5.0.28",
+          "datafixerupper-5.0.28.jar"
+        ),
+      },
+      {
+        url: "https://libraries.minecraft.net/com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "brigadier",
+          "1.0.18",
+          "brigadier-1.0.18.jar"
+        ),
+      },
+
+      // JOML
+      {
+        url: "https://repo1.maven.org/maven2/org/joml/joml/1.10.5/joml-1.10.5.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "joml",
+          "joml",
+          "1.10.5",
+          "joml-1.10.5.jar"
+        ),
+      },
+
+      // Text2Speech
+      {
+        url: "https://libraries.minecraft.net/com/mojang/text2speech/1.12.4/text2speech-1.12.4.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "text2speech",
+          "1.12.4",
+          "text2speech-1.12.4.jar"
+        ),
+      },
+
+      // Новые библиотеки для 1.20+ и 1.21
+      {
+        url: "https://repo.maven.apache.org/maven2/com/mojang/authlib/minecraft/3.6.49/authlib-minecraft-3.6.49.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "authlib-minecraft",
+          "3.6.49",
+          "authlib-minecraft-3.6.49.jar"
+        ),
+      },
+      {
+        url: "https://repo.maven.apache.org/maven2/com/mojang/telemetry/1.0.1/telemetry-1.0.1.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "mojang",
+          "telemetry",
+          "1.0.1",
+          "telemetry-1.0.1.jar"
+        ),
+      },
+    ];
+
+    for (const lib of requiredLibs) {
+      if (!(await fs.pathExists(lib.path))) {
+        console.log(`Скачиваем недостающую библиотеку: ${lib.path}`);
+        await fs.ensureDir(path.dirname(lib.path));
+        try {
+          await this.downloadFile(lib.url, lib.path, null);
+        } catch (error) {
+          console.log(`Ошибка скачивания ${lib.url}:`, error.message);
+        }
+      }
+    }
+  }
+
   async buildClasspath(instancePath, modpack) {
     const classpath = [];
 
-    // Главный jar файл
-    // Сначала добавляем библиотеки (они должны быть первыми)
+    // Vanilla jar
+    const mcVersion = modpack.minecraft_version;
+    const vanillaJar = path.join(
+      instancePath,
+      "versions",
+      mcVersion,
+      `${mcVersion}.jar`
+    );
+    if (await fs.pathExists(vanillaJar)) {
+      console.log("Vanilla Minecraft jar найден:", vanillaJar);
+      classpath.push(vanillaJar);
+    } else {
+      console.log("Vanilla Minecraft jar НЕ найден:", vanillaJar);
+    }
+
+    // Библиотеки
     const libsDir = path.join(instancePath, "libraries");
     if (await fs.pathExists(libsDir)) {
       const libJars = await this.findJarFiles(libsDir);
+      console.log(`Найдено библиотек: ${libJars.length}`);
+
+      // ВСТАВЬТЕ ЭТИ СТРОКИ СЮДА:
+      const mojangLibs = libJars.filter(
+        (jar) =>
+          jar.includes("mojang") ||
+          jar.includes("logging") ||
+          jar.includes("authlib") ||
+          jar.includes("datafixerupper")
+      );
+      console.log("Найдены Mojang библиотеки:", mojangLibs);
+
       classpath.push(...libJars);
     }
 
-    // Потом главный jar файл
-    const mcVersion = modpack.minecraft_version;
+    // И в конце Forge jar
     const forgeVersion = `${mcVersion}-${modpack.modloader}-${modpack.forge_version}`;
     const mainJar = path.join(
       instancePath,
@@ -1153,9 +1446,13 @@ class MinecraftLauncher {
     );
 
     if (await fs.pathExists(mainJar)) {
+      console.log("Forge jar найден:", mainJar);
       classpath.push(mainJar);
+    } else {
+      console.log("Forge jar НЕ найден:", mainJar);
     }
 
+    console.log(`Общий classpath содержит ${classpath.length} файлов`);
     return classpath.join(path.delimiter);
   }
 
