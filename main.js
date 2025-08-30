@@ -722,7 +722,22 @@ class MinecraftLauncher {
       console.error("Ошибка сохранения конфигурации:", error);
     }
   }
+  async cleanupOldLibraries(instancePath) {
+    const libsDir = path.join(instancePath, "libraries");
 
+    // Удаляем старые версии DataFixerUpper и Guava если они есть
+    const conflictingPaths = [
+      path.join(libsDir, "com", "mojang", "datafixerupper", "5.0.28"),
+      path.join(libsDir, "com", "google", "guava", "32.1.2-jre"),
+    ];
+
+    for (const conflictPath of conflictingPaths) {
+      if (await fs.pathExists(conflictPath)) {
+        console.log(`🗑️ Удаляем конфликтующую библиотеку: ${conflictPath}`);
+        await fs.remove(conflictPath);
+      }
+    }
+  }
   /**
    * Получает оптимизированные JVM аргументы для современных версий MC
    */
@@ -734,11 +749,23 @@ class MinecraftLauncher {
       `-Xmx${modpack.memory}`,
       "-Xms1G",
       "-XX:+UseG1GC",
+      "-XX:+UnlockExperimentalVMOptions",
+      "-XX:G1NewSizePercent=20",
+      "-XX:G1ReservePercent=20",
+      "-XX:MaxGCPauseMillis=50",
+      "-XX:G1HeapRegionSize=32M",
       "-Dlog4j2.formatMsgNoLookups=true",
       "-Dfml.earlyprogresswindow=false",
+
+      // ДОБАВЬТЕ ЭТИ СТРОКИ для offline режима:
+      "-Dcom.mojang.eula.agree=true",
+      "-Dminecraft.api.auth.host=",
+      "-Dminecraft.api.account.host=",
+      "-Dminecraft.api.session.host=",
+      "-Dminecraft.api.services.host=",
     ];
 
-    // Для Java 17+ добавляем необходимые модульные флаги
+    // Остальной код функции остается без изменений...
     if (javaMainVersion >= 17) {
       args.push(
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
@@ -748,19 +775,29 @@ class MinecraftLauncher {
         "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
         "--add-opens=java.base/java.security=ALL-UNNAMED",
         "--add-opens=java.base/java.net=ALL-UNNAMED",
-        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
       );
 
-      // Дополнительные флаги для Forge
       if (modloader === "forge" || modloader === "neoforge") {
         args.push(
           "--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED",
-          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED"
+          "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED",
+          "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.module=ALL-UNNAMED"
         );
       }
     }
 
-    // Системные свойства
+    if (javaMainVersion >= 21) {
+      args.push(
+        "-XX:+EnableDynamicAgentLoading",
+        "--add-opens=java.base/java.text=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.regex=ALL-UNNAMED"
+      );
+    }
+
     args.push(
       `-Dminecraft.launcher.brand=${this.config.launcher_name.replace(
         /\s/g,
@@ -1063,7 +1100,19 @@ class MinecraftLauncher {
       { ...modpack, memory },
       javaInfo.majorVersion
     );
+
+    // Очищаем старые конфликтующие библиотеки
+    await this.cleanupOldLibraries(instancePath);
+
+    // Скачиваем недостающие библиотеки
     await this.downloadMissingLibraries(instancePath, modpack);
+
+    // Скачиваем нативные LWJGL библиотеки
+    await this.downloadNativeLibraries(instancePath);
+
+    // ДОБАВЬТЕ ЭТУ СТРОКУ - скачиваем ассеты Minecraft
+    await this.downloadMinecraftAssets(instancePath, modpack.minecraft_version);
+
     const classpath = await this.buildClasspath(instancePath, modpack);
 
     jvmArgs.push(
@@ -1073,7 +1122,7 @@ class MinecraftLauncher {
       this.getMainClass(modpack)
     );
 
-    // Аргументы игры - КРИТИЧНО: сокращаем длину путей
+    // Остальной код остается без изменений...
     const shortInstancePath = path.relative(process.cwd(), instancePath);
     const gameArgs = [
       "--username",
@@ -1097,15 +1146,6 @@ class MinecraftLauncher {
     ];
 
     const allArgs = [...jvmArgs, ...gameArgs];
-
-    // ИСПРАВЛЕНИЕ ОШИБКИ ENAMETOOLONG: проверяем длину команды
-    const commandLength = javaPath.length + allArgs.join(" ").length;
-    /*if (commandLength > 8000) {
-      // Максимальная длина команды в Windows ~8191 символов
-      throw new Error(
-        "Команда запуска слишком длинная. Попробуйте переместить лаунчер ближе к корню диска."
-      );
-    }*/
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
@@ -1289,7 +1329,7 @@ class MinecraftLauncher {
         ),
       },
 
-      // FastUtil, Guava, Gson, Commons IO / Lang
+      // FastUtil
       {
         url: "https://repo1.maven.org/maven2/it/unimi/dsi/fastutil/8.5.9/fastutil-8.5.9.jar",
         path: path.join(
@@ -1302,16 +1342,18 @@ class MinecraftLauncher {
           "fastutil-8.5.9.jar"
         ),
       },
-      // Guava - используем более новую версию для совместимости
+
+      // Guava - ИСПРАВЛЕННАЯ ВЕРСИЯ для совместимости с DataFixerUpper 6.0.8
       {
-        url: "https://repo1.maven.org/maven2/com/google/guava/guava/32.1.2-jre/guava-32.1.2-jre.jar",
+        url: "https://repo1.maven.org/maven2/com/google/guava/guava/31.1-jre/guava-31.1-jre.jar",
         path: path.join(
           libsDir,
           "com",
           "google",
           "guava",
-          "32.1.2-jre",
-          "guava-32.1.2-jre.jar"
+          "guava",
+          "31.1-jre",
+          "guava-31.1-jre.jar"
         ),
       },
 
@@ -1341,6 +1383,46 @@ class MinecraftLauncher {
           "listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar"
         ),
       },
+
+      // Зависимости для Guava 31.1-jre
+      {
+        url: "https://repo1.maven.org/maven2/org/checkerframework/checker-qual/3.12.0/checker-qual-3.12.0.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "checkerframework",
+          "checker-qual",
+          "3.12.0",
+          "checker-qual-3.12.0.jar"
+        ),
+      },
+
+      {
+        url: "https://repo1.maven.org/maven2/com/google/errorprone/error_prone_annotations/2.11.0/error_prone_annotations-2.11.0.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "errorprone",
+          "error_prone_annotations",
+          "2.11.0",
+          "error_prone_annotations-2.11.0.jar"
+        ),
+      },
+
+      {
+        url: "https://repo1.maven.org/maven2/com/google/j2objc/j2objc-annotations/1.3/j2objc-annotations-1.3.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "j2objc",
+          "j2objc-annotations",
+          "1.3",
+          "j2objc-annotations-1.3.jar"
+        ),
+      },
+
       {
         url: "https://repo1.maven.org/maven2/com/google/code/gson/gson/2.8.9/gson-2.8.9.jar",
         path: path.join(
@@ -1353,6 +1435,7 @@ class MinecraftLauncher {
           "gson-2.8.9.jar"
         ),
       },
+
       {
         url: "https://repo1.maven.org/maven2/commons-io/commons-io/2.11.0/commons-io-2.11.0.jar",
         path: path.join(
@@ -1362,6 +1445,7 @@ class MinecraftLauncher {
           "commons-io-2.11.0.jar"
         ),
       },
+
       {
         url: "https://repo1.maven.org/maven2/org/apache/commons/commons-lang3/3.12.0/commons-lang3-3.12.0.jar",
         path: path.join(
@@ -1375,18 +1459,34 @@ class MinecraftLauncher {
         ),
       },
 
-      // DataFixerUpper, Brigadier
+      // DataFixerUpper - ИСПРАВЛЕННАЯ ВЕРСИЯ 6.0.8 для MC 1.20.1
       {
-        url: "https://libraries.minecraft.net/com/mojang/datafixerupper/5.0.28/datafixerupper-5.0.28.jar",
+        url: "https://libraries.minecraft.net/com/mojang/datafixerupper/6.0.8/datafixerupper-6.0.8.jar",
         path: path.join(
           libsDir,
           "com",
           "mojang",
           "datafixerupper",
-          "5.0.28",
-          "datafixerupper-5.0.28.jar"
+          "6.0.8",
+          "datafixerupper-6.0.8.jar"
         ),
       },
+
+      // Зависимость для DataFixerUpper
+      {
+        url: "https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "google",
+          "code",
+          "findbugs",
+          "jsr305",
+          "3.0.2",
+          "jsr305-3.0.2.jar"
+        ),
+      },
+
       {
         url: "https://libraries.minecraft.net/com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar",
         path: path.join(
@@ -1425,8 +1525,7 @@ class MinecraftLauncher {
         ),
       },
 
-      // ИСПРАВЛЕННЫЕ библиотеки для MC 1.20.1
-      // Используем правильную версию authlib 4.0.43 для MC 1.20.1
+      // Authlib для MC 1.20.1
       {
         url: "https://libraries.minecraft.net/com/mojang/authlib/4.0.43/authlib-4.0.43.jar",
         path: path.join(
@@ -1439,10 +1538,6 @@ class MinecraftLauncher {
         ),
       },
 
-      // Убираем authlib-minecraft - эта библиотека не существует в таком виде
-      // Убираем telemetry - эта библиотека не нужна для Forge
-
-      // Добавляем недостающие критичные библиотеки для Forge 47.3.33
       {
         url: "https://repo1.maven.org/maven2/net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar",
         path: path.join(
@@ -1455,7 +1550,7 @@ class MinecraftLauncher {
         ),
       },
 
-      // Netty библиотеки для MC 1.20.1 (используем модульную версию вместо netty-all)
+      // Netty библиотеки для MC 1.20.1
       {
         url: "https://repo1.maven.org/maven2/io/netty/netty-buffer/4.1.82.Final/netty-buffer-4.1.82.Final.jar",
         path: path.join(
@@ -1533,6 +1628,99 @@ class MinecraftLauncher {
           "netty-transport-native-epoll-4.1.82.Final.jar"
         ),
       },
+
+      // LWJGL библиотеки для MC 1.20.1 - КРИТИЧНО для работы графики
+      {
+        url: "https://repo1.maven.org/maven2/org/lwjgl/lwjgl/3.3.1/lwjgl-3.3.1.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl",
+          "3.3.1",
+          "lwjgl-3.3.1.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/lwjgl/lwjgl-jemalloc/3.3.1/lwjgl-jemalloc-3.3.1.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-jemalloc",
+          "3.3.1",
+          "lwjgl-jemalloc-3.3.1.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/lwjgl/lwjgl-openal/3.3.1/lwjgl-openal-3.3.1.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-openal",
+          "3.3.1",
+          "lwjgl-openal-3.3.1.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/lwjgl/lwjgl-opengl/3.3.1/lwjgl-opengl-3.3.1.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-opengl",
+          "3.3.1",
+          "lwjgl-opengl-3.3.1.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/lwjgl/lwjgl-glfw/3.3.1/lwjgl-glfw-3.3.1.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-glfw",
+          "3.3.1",
+          "lwjgl-glfw-3.3.1.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/lwjgl/lwjgl-stb/3.3.1/lwjgl-stb-3.3.1.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-stb",
+          "3.3.1",
+          "lwjgl-stb-3.3.1.jar"
+        ),
+      },
+      {
+        url: "https://repo1.maven.org/maven2/org/lwjgl/lwjgl-tinyfd/3.3.1/lwjgl-tinyfd-3.3.1.jar",
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-tinyfd",
+          "3.3.1",
+          "lwjgl-tinyfd-3.3.1.jar"
+        ),
+      },
+
+      // ICU4J библиотека для поддержки Unicode - КРИТИЧНО для MC 1.20.1
+      {
+        url: "https://repo1.maven.org/maven2/com/ibm/icu/icu4j/71.1/icu4j-71.1.jar",
+        path: path.join(
+          libsDir,
+          "com",
+          "ibm",
+          "icu",
+          "icu4j",
+          "71.1",
+          "icu4j-71.1.jar"
+        ),
+      },
     ];
 
     console.log(`Проверяем ${requiredLibs.length} библиотек...`);
@@ -1556,13 +1744,307 @@ class MinecraftLauncher {
     console.log("Скачивание библиотек завершено");
   }
 
+  async downloadMinecraftAssets(instancePath, mcVersion) {
+    const assetsDir = path.join(instancePath, "assets");
+    const indexesDir = path.join(assetsDir, "indexes");
+    const objectsDir = path.join(assetsDir, "objects");
+
+    await fs.ensureDir(assetsDir);
+    await fs.ensureDir(indexesDir);
+    await fs.ensureDir(objectsDir);
+
+    console.log(`Скачиваем ассеты для Minecraft ${mcVersion}...`);
+
+    // Скачиваем asset index
+    const assetIndexUrl = `https://launchermeta.mojang.com/v1/packages/c9df48efed58511cdd0213c56b9013a7b5c9ac1f/1.20.1.json`;
+    const assetIndexPath = path.join(indexesDir, `${mcVersion}.json`);
+
+    try {
+      await this.downloadFile(assetIndexUrl, assetIndexPath, null);
+      console.log(`✅ Скачан asset index для ${mcVersion}`);
+
+      // Читаем asset index и скачиваем основные ассеты
+      const assetIndex = JSON.parse(await fs.readFile(assetIndexPath, "utf8"));
+      const objects = assetIndex.objects || {};
+
+      // Скачиваем только критические ассеты (иконки, звуки, шрифты)
+      const criticalAssets = Object.entries(objects).filter(
+        ([name]) =>
+          name.includes("icons/") ||
+          name.includes("font/") ||
+          name.includes("sounds/") ||
+          name.includes("lang/en_us.json")
+      );
+
+      console.log(`Скачиваем ${criticalAssets.length} критических ассетов...`);
+
+      let downloaded = 0;
+      for (const [assetName, assetInfo] of criticalAssets) {
+        const hash = assetInfo.hash;
+        const assetDir = path.join(objectsDir, hash.substring(0, 2));
+        const assetPath = path.join(assetDir, hash);
+
+        if (!(await fs.pathExists(assetPath))) {
+          await fs.ensureDir(assetDir);
+          const assetUrl = `https://resources.download.minecraft.net/${hash.substring(
+            0,
+            2
+          )}/${hash}`;
+
+          try {
+            await this.downloadFile(assetUrl, assetPath, null);
+            downloaded++;
+
+            if (downloaded % 10 === 0) {
+              console.log(
+                `Скачано ассетов: ${downloaded}/${criticalAssets.length}`
+              );
+            }
+          } catch (error) {
+            console.log(
+              `❌ Ошибка скачивания ассета ${assetName}: ${error.message}`
+            );
+          }
+        }
+      }
+
+      console.log(`✅ Скачано ${downloaded} ассетов`);
+    } catch (error) {
+      console.log(`❌ Ошибка скачивания ассетов: ${error.message}`);
+      // Создаем минимальный asset index если скачивание не удалось
+      await this.createMinimalAssetIndex(assetIndexPath);
+    }
+  }
+
+  async createMinimalAssetIndex(assetIndexPath) {
+    const minimalIndex = {
+      objects: {
+        "icons/icon_16x16.png": {
+          hash: "0000000000000000000000000000000000000000",
+          size: 100,
+        },
+        "icons/icon_32x32.png": {
+          hash: "0000000000000000000000000000000000000001",
+          size: 100,
+        },
+      },
+    };
+
+    await fs.writeFile(assetIndexPath, JSON.stringify(minimalIndex, null, 2));
+    console.log("Создан минимальный asset index");
+  }
+
+  async downloadNativeLibraries(instancePath) {
+    const platform = os.platform();
+    const arch = os.arch();
+
+    let nativeSuffix = "";
+    if (platform === "win32") {
+      nativeSuffix = arch === "x64" ? "natives-windows" : "natives-windows-x86";
+    } else if (platform === "darwin") {
+      nativeSuffix = "natives-macos";
+    } else {
+      nativeSuffix = "natives-linux";
+    }
+
+    const nativesDir = path.join(instancePath, "versions", "natives");
+    const libsDir = path.join(instancePath, "libraries");
+
+    await fs.ensureDir(nativesDir);
+
+    // Список нативных LWJGL библиотек для MC 1.20.1
+    const nativeLibs = [
+      {
+        url: `https://repo1.maven.org/maven2/org/lwjgl/lwjgl/3.3.1/lwjgl-3.3.1-${nativeSuffix}.jar`,
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl",
+          "3.3.1",
+          `lwjgl-3.3.1-${nativeSuffix}.jar`
+        ),
+      },
+      {
+        url: `https://repo1.maven.org/maven2/org/lwjgl/lwjgl-jemalloc/3.3.1/lwjgl-jemalloc-3.3.1-${nativeSuffix}.jar`,
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-jemalloc",
+          "3.3.1",
+          `lwjgl-jemalloc-3.3.1-${nativeSuffix}.jar`
+        ),
+      },
+      {
+        url: `https://repo1.maven.org/maven2/org/lwjgl/lwjgl-openal/3.3.1/lwjgl-openal-3.3.1-${nativeSuffix}.jar`,
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-openal",
+          "3.3.1",
+          `lwjgl-openal-3.3.1-${nativeSuffix}.jar`
+        ),
+      },
+      {
+        url: `https://repo1.maven.org/maven2/org/lwjgl/lwjgl-opengl/3.3.1/lwjgl-opengl-3.3.1-${nativeSuffix}.jar`,
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-opengl",
+          "3.3.1",
+          `lwjgl-opengl-3.3.1-${nativeSuffix}.jar`
+        ),
+      },
+      {
+        url: `https://repo1.maven.org/maven2/org/lwjgl/lwjgl-glfw/3.3.1/lwjgl-glfw-3.3.1-${nativeSuffix}.jar`,
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-glfw",
+          "3.3.1",
+          `lwjgl-glfw-3.3.1-${nativeSuffix}.jar`
+        ),
+      },
+      {
+        url: `https://repo1.maven.org/maven2/org/lwjgl/lwjgl-stb/3.3.1/lwjgl-stb-3.3.1-${nativeSuffix}.jar`,
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-stb",
+          "3.3.1",
+          `lwjgl-stb-3.3.1-${nativeSuffix}.jar`
+        ),
+      },
+      {
+        url: `https://repo1.maven.org/maven2/org/lwjgl/lwjgl-tinyfd/3.3.1/lwjgl-tinyfd-3.3.1-${nativeSuffix}.jar`,
+        path: path.join(
+          libsDir,
+          "org",
+          "lwjgl",
+          "lwjgl-tinyfd",
+          "3.3.1",
+          `lwjgl-tinyfd-3.3.1-${nativeSuffix}.jar`
+        ),
+      },
+    ];
+
+    console.log(
+      `Скачиваем нативные LWJGL библиотеки для ${platform} ${arch}...`
+    );
+
+    for (const lib of nativeLibs) {
+      if (!(await fs.pathExists(lib.path))) {
+        console.log(
+          `Скачиваем нативную библиотеку: ${path.basename(lib.path)}`
+        );
+        await fs.ensureDir(path.dirname(lib.path));
+        try {
+          await this.downloadFile(lib.url, lib.path, null);
+
+          // Извлекаем нативные файлы в папку natives
+          await this.extractNativesToDir(lib.path, nativesDir);
+          console.log(
+            `✅ Успешно скачано и извлечено: ${path.basename(lib.path)}`
+          );
+        } catch (error) {
+          console.log(
+            `❌ Ошибка скачивания нативной библиотеки ${lib.url}: ${error.message}`
+          );
+        }
+      } else {
+        // Если библиотека уже есть, извлекаем нативы
+        await this.extractNativesToDir(lib.path, nativesDir);
+        console.log(`✅ Нативы извлечены: ${path.basename(lib.path)}`);
+      }
+    }
+
+    console.log("Скачивание нативных библиотек завершено");
+  }
+
+  // Функция для извлечения нативных файлов из JAR
+  async extractNativesToDir(jarPath, nativesDir) {
+    return new Promise((resolve, reject) => {
+      yauzl.open(jarPath, { lazyEntries: true }, (err, zipfile) => {
+        if (err) return reject(err);
+
+        zipfile.readEntry();
+        zipfile.on("entry", (entry) => {
+          // Извлекаем только нативные файлы (.dll, .so, .dylib)
+          if (entry.fileName.match(/\.(dll|so|dylib)$/)) {
+            const extractPath = path.join(
+              nativesDir,
+              path.basename(entry.fileName)
+            );
+
+            zipfile.openReadStream(entry, (err, readStream) => {
+              if (err) return reject(err);
+
+              const writeStream = fs.createWriteStream(extractPath);
+              readStream.pipe(writeStream);
+              writeStream.on("close", () => {
+                zipfile.readEntry();
+              });
+              writeStream.on("error", reject);
+            });
+          } else {
+            zipfile.readEntry();
+          }
+        });
+
+        zipfile.on("end", () => {
+          resolve();
+        });
+
+        zipfile.on("error", reject);
+      });
+    });
+  }
+
   async buildClasspath(instancePath, modpack) {
     const classpath = [];
 
-    // СНАЧАЛА добавляем наши критичные библиотеки (чтобы они имели приоритет)
+    // СНАЧАЛА добавляем критичные библиотеки в правильном порядке
     const libsDir = path.join(instancePath, "libraries");
     const priorityLibs = [
-      // Guava и её зависимости - добавляем первыми для приоритета
+      // DataFixerUpper - ДОЛЖЕН БЫТЬ ПЕРВЫМ для правильной работы
+      path.join(
+        libsDir,
+        "com",
+        "mojang",
+        "datafixerupper",
+        "6.0.8",
+        "datafixerupper-6.0.8.jar"
+      ),
+
+      // ICU4J для поддержки Unicode - КРИТИЧНО
+      path.join(
+        libsDir,
+        "com",
+        "ibm",
+        "icu",
+        "icu4j",
+        "71.1",
+        "icu4j-71.1.jar"
+      ),
+
+      // Зависимости для DataFixerUpper
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "code",
+        "findbugs",
+        "jsr305",
+        "3.0.2",
+        "jsr305-3.0.2.jar"
+      ),
+
+      // Guava и её зависимости - обновленная версия 31.1-jre
       path.join(
         libsDir,
         "com",
@@ -1578,8 +2060,8 @@ class MinecraftLauncher {
         "google",
         "guava",
         "guava",
-        "32.1.2-jre",
-        "guava-32.1.2-jre.jar"
+        "31.1-jre",
+        "guava-31.1-jre.jar"
       ),
       path.join(
         libsDir,
@@ -1590,7 +2072,36 @@ class MinecraftLauncher {
         "9999.0-empty-to-avoid-conflict-with-guava",
         "listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar"
       ),
-      // OSHI
+
+      // Зависимости для корректной работы Guava 31.1-jre
+      path.join(
+        libsDir,
+        "org",
+        "checkerframework",
+        "checker-qual",
+        "3.12.0",
+        "checker-qual-3.12.0.jar"
+      ),
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "j2objc",
+        "j2objc-annotations",
+        "1.3",
+        "j2objc-annotations-1.3.jar"
+      ),
+      path.join(
+        libsDir,
+        "com",
+        "google",
+        "errorprone",
+        "error_prone_annotations",
+        "2.11.0",
+        "error_prone_annotations-2.11.0.jar"
+      ),
+
+      // OSHI (оставляем как было)
       path.join(
         libsDir,
         "com",
@@ -1672,6 +2183,13 @@ class MinecraftLauncher {
     }
 
     console.log(`Общий classpath содержит ${classpath.length} файлов`);
+
+    // Логируем первые несколько файлов classpath для отладки
+    console.log("Первые файлы в classpath:");
+    classpath.slice(0, 10).forEach((file, index) => {
+      console.log(`  ${index + 1}. ${path.basename(file)}`);
+    });
+
     return classpath.join(path.delimiter);
   }
 
