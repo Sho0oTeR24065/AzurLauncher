@@ -822,6 +822,15 @@ class MinecraftLauncher {
       args.push("-Dfile.encoding=UTF-8");
     }
 
+    if (modpack.modloader === "forge") {
+      args.push(
+        "-DforgeLoadingContext=true",
+        "-Dfml.forgeVersion=" + modpack.forge_version,
+        "-Dfml.mcVersion=" + modpack.minecraft_version,
+        "-Dfml.majorVersion=47"
+      );
+    }
+
     return args;
   }
 
@@ -938,7 +947,9 @@ class MinecraftLauncher {
    * Определяет главный класс для современных модлоадеров
    */
   getMainClass(modpack) {
-    // Используем обычный клиент вместо Forge bootstrap для Java 21
+    if (modpack.modloader === "forge") {
+      return "cpw.mods.modlauncher.Launcher";
+    }
     return "net.minecraft.client.main.Main";
   }
 
@@ -956,7 +967,9 @@ class MinecraftLauncher {
       }
 
       const downloadUrl = await this.getYandexDirectLink(modpack.download_url);
-      await this.downloadFile(downloadUrl, zipPath, onProgress);
+      await this.downloadFile(downloadUrl, zipPath, (progress) => {
+        onProgress(progress, "modpack"); // Передаем stage в onProgress
+      });
 
       const stats = await fs.stat(zipPath);
       if (stats.size < 1024) {
@@ -964,8 +977,31 @@ class MinecraftLauncher {
       }
 
       await this.extractModpack(zipPath, instancePath);
+      onProgress(50, "modpack"); // Модпак извлечен
+
       await fs.remove(zipPath);
       await this.setupModpackStructure(instancePath, modpack);
+
+      // ДОБАВИТЬ загрузку компонентов с прогрессом:
+      await this.downloadMissingLibraries(instancePath, modpack, (progress) => {
+        onProgress(progress, "libraries");
+      });
+
+      await this.downloadNativeLibraries(instancePath, (progress) => {
+        onProgress(progress, "natives");
+      });
+
+      await this.downloadMinecraftAssets(
+        instancePath,
+        modpack.minecraft_version,
+        (progress) => {
+          onProgress(progress, "assets");
+        }
+      );
+
+      await this.downloadForgeClient(instancePath, modpack, (progress) => {
+        onProgress(progress, "forge");
+      });
 
       return true;
     } catch (error) {
@@ -977,6 +1013,35 @@ class MinecraftLauncher {
       }
       throw error;
     }
+  }
+
+  async downloadForgeClient(instancePath, modpack) {
+    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
+    const forgeDir = path.join(instancePath, "versions", forgeVersion);
+    const forgeJar = path.join(forgeDir, `${forgeVersion}.jar`);
+
+    if (await fs.pathExists(forgeJar)) return;
+
+    await fs.ensureDir(forgeDir);
+
+    // URL для Forge 1.20.1-47.3.33
+    const forgeUrl = `https://maven.minecraftforge.net/net/minecraftforge/forge/${modpack.minecraft_version}-${modpack.forge_version}/forge-${modpack.minecraft_version}-${modpack.forge_version}-client.jar`;
+
+    await this.downloadFile(forgeUrl, forgeJar, null);
+
+    // Создаем JSON профиль для Forge
+    const forgeProfile = {
+      id: forgeVersion,
+      mainClass: "cpw.mods.modlauncher.Launcher",
+      arguments: {
+        jvm: ["-DforgeLoadingContext=true"],
+      },
+    };
+
+    await fs.writeFile(
+      path.join(forgeDir, `${forgeVersion}.json`),
+      JSON.stringify(forgeProfile, null, 2)
+    );
   }
 
   async getYandexDirectLink(shareUrl) {
@@ -1042,7 +1107,7 @@ class MinecraftLauncher {
     }
   }
 
-  downloadFile(url, filepath, onProgress) {
+  downloadFile(url, filepath, onProgress, stage = null) {
     return new Promise((resolve, reject) => {
       const file = fs.createWriteStream(filepath);
       let attempt = 0;
@@ -1364,6 +1429,34 @@ class MinecraftLauncher {
     }
   }
 
+  async checkMissingLibraries(instancePath, modpack) {
+    const missingLibs = [];
+
+    // Проверяем основные библиотеки
+    const libsDir = path.join(instancePath, "libraries");
+    const criticalLibs = [
+      path.join(
+        libsDir,
+        "com",
+        "mojang",
+        "datafixerupper",
+        "6.0.8",
+        "datafixerupper-6.0.8.jar"
+      ),
+      path.join(libsDir, "org", "lwjgl", "lwjgl", "3.3.1", "lwjgl-3.3.1.jar"),
+    ];
+
+    for (const lib of criticalLibs) {
+      if (!(await fs.pathExists(lib))) {
+        missingLibs.push(lib);
+      }
+    }
+
+    if (missingLibs.length > 0) {
+      throw new Error(`Модпак поврежден. Переустановите модпак.`);
+    }
+  }
+
   /**
    * Обновленная функция запуска с дополнительной настройкой offline режима
    */
@@ -1399,14 +1492,7 @@ class MinecraftLauncher {
     // Очищаем старые конфликтующие библиотеки
     await this.cleanupOldLibraries(instancePath);
 
-    // Скачиваем недостающие библиотеки
-    await this.downloadMissingLibraries(instancePath, modpack);
-
-    // Скачиваем нативные LWJGL библиотеки
-    await this.downloadNativeLibraries(instancePath);
-
-    // Скачиваем ассеты Minecraft
-    await this.downloadMinecraftAssets(instancePath, modpack);
+    await this.checkMissingLibraries(instancePath, modpack);
 
     const classpath = await this.buildClasspath(instancePath, modpack);
 
@@ -2050,19 +2136,19 @@ class MinecraftLauncher {
 
     console.log(`Проверяем ${requiredLibs.length} библиотек...`);
 
-    for (const lib of requiredLibs) {
+    for (let i = 0; i < requiredLibs.length; i++) {
+      const lib = requiredLibs[i];
       if (!(await fs.pathExists(lib.path))) {
-        console.log(`Скачиваем недостающую библиотеку: ${lib.path}`);
         await fs.ensureDir(path.dirname(lib.path));
         try {
           await this.downloadFile(lib.url, lib.path, null);
-          console.log(`✅ Успешно скачано: ${path.basename(lib.path)}`);
         } catch (error) {
-          console.log(`❌ Ошибка скачивания ${lib.url}: ${error.message}`);
-          // Не прерываем процесс, продолжаем скачивать другие библиотеки
+          console.log(`❌ Ошибка: ${error.message}`);
         }
-      } else {
-        console.log(`✅ Уже есть: ${path.basename(lib.path)}`);
+      }
+
+      if (onProgress) {
+        onProgress(Math.round(((i + 1) / requiredLibs.length) * 100));
       }
     }
 

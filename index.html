@@ -1127,9 +1127,33 @@
         progressContainer.classList.remove("hidden");
         updateStatus("📥 Скачивание модпака...", "info");
 
-        const progressHandler = (event, progress) => {
-          progressBar.style.width = progress + "%";
-          progressText.textContent = `${progress}%`;
+        const progressHandler = (event, progress, stage) => {
+          let displayProgress = progress;
+          let displayText = `${progress}%`;
+
+          if (stage === "modpack") {
+            displayProgress = progress * 0.5;
+            displayText = `Загрузка модпака... ${Math.round(displayProgress)}%`;
+          } else if (stage === "libraries") {
+            displayProgress = 50 + progress * 0.3;
+            displayText = `Загрузка библиотек... ${Math.round(
+              displayProgress
+            )}%`;
+          } else if (stage === "natives") {
+            displayProgress = 80 + progress * 0.1;
+            displayText = `Нативные библиотеки... ${Math.round(
+              displayProgress
+            )}%`;
+          } else if (stage === "assets") {
+            displayProgress = 90 + progress * 0.05;
+            displayText = `Загрузка ассетов... ${Math.round(displayProgress)}%`;
+          } else if (stage === "forge") {
+            displayProgress = 95 + progress * 0.05;
+            displayText = `Установка Forge... ${Math.round(displayProgress)}%`;
+          }
+
+          progressBar.style.width = displayProgress + "%";
+          progressText.textContent = displayText;
         };
 
         ipcRenderer.on("download-progress", progressHandler);
