@@ -759,20 +759,21 @@ class MinecraftLauncher {
       "-Dlog4j2.formatMsgNoLookups=true",
     ];
 
-    // Модульные аргументы для Java 17+
+    // МИНИМАЛЬНЫЕ аргументы для Java 17+ - только самое необходимое
     if (javaMainVersion >= 17) {
       args.push(
+        // Только критичные открытия пакетов
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-        "--add-opens=java.base/java.text=ALL-UNNAMED",
-        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
-        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-        "--add-opens=java.base/java.util.regex=ALL-UNNAMED",
-        "--add-opens=java.base/java.net=ALL-UNNAMED",
         "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
-        "--add-opens=java.base/java.io=ALL-UNNAMED",
-        "--add-opens=java.desktop/sun.awt.image=ALL-UNNAMED"
+        "--add-opens=java.base/java.io=ALL-UNNAMED"
+
+        // УБРАЛИ ВСЕ проблемные флаги:
+        // - --module-path
+        // - --add-modules
+        // - --permit-illegal-access
+        // - -Djdk.module.*
       );
     }
 
@@ -781,6 +782,34 @@ class MinecraftLauncher {
     }
 
     return args;
+  }
+
+  getModuleBypassArgs(javaVersion) {
+    const javaMainVersion = parseInt(javaVersion);
+
+    if (javaMainVersion < 17) {
+      return []; // Модули появились в Java 9, но стали строгими в 17+
+    }
+
+    return [
+      // КЛЮЧЕВОЕ РЕШЕНИЕ: запускаем в legacy режиме без модулей
+      "--add-modules=ALL-SYSTEM",
+      "--patch-module=java.base=" +
+        [
+          // Добавляем все ASM JAR в базовый модуль Java
+          "libraries/org/ow2/asm/asm/9.5/asm-9.5.jar",
+          "libraries/org/ow2/asm/asm-tree/9.5/asm-tree-9.5.jar",
+          "libraries/org/ow2/asm/asm-util/9.5/asm-util-9.5.jar",
+          "libraries/org/ow2/asm/asm-commons/9.5/asm-commons-9.5.jar",
+          "libraries/org/ow2/asm/asm-analysis/9.5/asm-analysis-9.5.jar",
+          "libraries/org/spongepowered/mixin/0.8.5/mixin-0.8.5.jar",
+        ].join(path.delimiter),
+
+      // Альтернативное решение: полностью отключить модули
+      "-Djdk.module.main=false",
+      "-Djdk.module.path=",
+      "-Djdk.module.upgrade.path=",
+    ];
   }
 
   // И самое главное - создаём фиктивный authlib JAR
@@ -1601,6 +1630,258 @@ class MinecraftLauncher {
   }
 
   /**
+   * Создает manifest JAR с classpath для обхода ограничения длины командной строки
+   */
+  async createClasspathManifest(instancePath, modpack) {
+    const manifestDir = path.join(instancePath, "temp");
+    const manifestJarPath = path.join(manifestDir, "classpath-manifest.jar");
+
+    await fs.ensureDir(manifestDir);
+
+    console.log(
+      "🔧 Создаем classpath manifest для обхода ограничения Windows..."
+    );
+
+    // Строим относительные пути для classpath
+    const classpath = await this.buildRelativeClasspath(instancePath, modpack);
+
+    // Создаем MANIFEST.MF содержимое
+    const manifestContent = `Manifest-Version: 1.0
+Class-Path: ${classpath}
+Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
+
+`;
+
+    // Создаем JAR с manifest
+    const JSZip = require("jszip");
+    const zip = new JSZip();
+
+    // Добавляем META-INF/MANIFEST.MF
+    zip.file("META-INF/MANIFEST.MF", manifestContent);
+
+    // Создаем JAR файл
+    const jarBuffer = await zip.generateAsync({ type: "nodebuffer" });
+    await fs.writeFile(manifestJarPath, jarBuffer);
+
+    console.log(`✅ Создан classpath manifest: ${manifestJarPath}`);
+    console.log(
+      `📏 Classpath содержит ${classpath.split(" ").length} элементов`
+    );
+
+    return manifestJarPath;
+  }
+
+  /**
+   * Строит относительный classpath для manifest файла
+   */
+  async buildRelativeClasspath(instancePath, modpack) {
+    const classpath = [];
+
+    // 1. Добавляем все библиотеки из libraries с относительными путями
+    const libsDir = path.join(instancePath, "libraries");
+    if (await fs.pathExists(libsDir)) {
+      const allLibJars = await this.findJarFiles(libsDir);
+
+      for (const jarPath of allLibJars) {
+        // Конвертируем в относительный путь от instancePath
+        const relativePath = path.relative(instancePath, jarPath);
+        // Для manifest используем forward slashes даже в Windows
+        const manifestPath = relativePath.replace(/\\/g, "/");
+        classpath.push(manifestPath);
+      }
+    }
+
+    // 2. НЕ добавляем главные JAR файлы Minecraft и Forge в classpath
+    // Они будут переданы через системные свойства
+
+    console.log(`📚 Relative classpath содержит ${classpath.length} файлов`);
+    return classpath.join(" ");
+  }
+
+  async launchMinecraftVanilla(username, modpack, customMemoryGB) {
+    const instancePath = path.join(this.instancesDir, modpack.id);
+
+    if (!fs.existsSync(instancePath)) {
+      throw new Error("Модпак не установлен");
+    }
+
+    // Проверяем наличие vanilla Minecraft JAR
+    const vanillaJar = path.join(
+      instancePath,
+      "versions",
+      modpack.minecraft_version,
+      `${modpack.minecraft_version}.jar`
+    );
+    if (!(await fs.pathExists(vanillaJar))) {
+      console.log("📥 Скачиваем vanilla Minecraft JAR...");
+      await this.downloadVanillaClient(instancePath, modpack.minecraft_version);
+    }
+
+    const javaInfo = await this.ensureJavaAvailable();
+    const javaPath = javaInfo.path;
+
+    console.log(
+      `☕ Используем Java: ${javaPath} (версия ${javaInfo.majorVersion})`
+    );
+
+    const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
+
+    // УЛЬТРА-ПРОСТЫЕ аргументы - только для vanilla Minecraft
+    const vanillaArgs = [
+      `-Xmx${memory}`,
+      "-Xms1G",
+      `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
+      "-cp",
+      vanillaJar, // Только vanilla JAR
+      "net.minecraft.client.main.Main", // Vanilla главный класс
+      "--username",
+      username,
+      "--version",
+      modpack.minecraft_version,
+      "--gameDir",
+      instancePath,
+      "--assetsDir",
+      path.join(instancePath, "assets"),
+      "--assetIndex",
+      modpack.minecraft_version,
+      "--uuid",
+      this.generateOfflineUUID(username),
+      "--accessToken",
+      "null",
+      "--userType",
+      "legacy",
+    ];
+
+    console.log("🚀 Запускаем VANILLA Minecraft (без модов)...");
+    console.log(`📁 Рабочая директория: ${instancePath}`);
+
+    const minecraft = spawn(javaPath, vanillaArgs, {
+      cwd: instancePath,
+      stdio: ["ignore", "inherit", "inherit"],
+      detached: false,
+      env: {
+        ...process.env,
+        JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
+      },
+    });
+
+    minecraft.on("error", (error) => {
+      console.error("❌ Ошибка запуска процесса:", error);
+      throw error;
+    });
+
+    minecraft.on("exit", (code, signal) => {
+      console.log(
+        `🔴 Minecraft завершился с кодом: ${code}, сигнал: ${signal}`
+      );
+    });
+
+    console.log(`✅ Minecraft процесс запущен (PID: ${minecraft.pid})`);
+    return minecraft;
+  }
+
+  async launchMinecraftSimple(username, modpack, customMemoryGB) {
+    const instancePath = path.join(this.instancesDir, modpack.id);
+
+    if (!fs.existsSync(instancePath)) {
+      throw new Error("Модпак не установлен");
+    }
+
+    await this.ensureForgeStructure(instancePath, modpack);
+
+    // Убеждаемся что Java доступна
+    const javaInfo = await this.ensureJavaAvailable();
+    const javaPath = javaInfo.path;
+
+    console.log(
+      `☕ Используем Java: ${javaPath} (версия ${javaInfo.majorVersion})`
+    );
+
+    // МАКСИМАЛЬНО ПРОСТЫЕ JVM аргументы
+    const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
+
+    const simpleJvmArgs = [
+      `-Xmx${memory}`,
+      "-Xms1G",
+      "-XX:+UseG1GC",
+      "-Dlog4j2.formatMsgNoLookups=true",
+
+      // ТОЛЬКО базовые системные свойства
+      `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
+      `-Dminecraft.client.jar=${path.join(
+        instancePath,
+        "versions",
+        modpack.minecraft_version,
+        `${modpack.minecraft_version}.jar`
+      )}`,
+
+      // НЕТ модульных флагов - только classpath!
+    ];
+
+    // Строим classpath
+    console.log("🔧 Создание простого classpath...");
+    const classpathFile = await this.createClasspathFile(instancePath, modpack);
+
+    const finalArgs = [
+      ...simpleJvmArgs,
+      "-cp",
+      `@${classpathFile}`,
+      "cpw.mods.bootstraplauncher.BootstrapLauncher", // Пробуем BootstrapLauncher но без модульных флагов
+      "--username",
+      username,
+      "--version",
+      modpack.minecraft_version,
+      "--gameDir",
+      instancePath,
+      "--assetsDir",
+      path.join(instancePath, "assets"),
+      "--assetIndex",
+      modpack.minecraft_version,
+      "--uuid",
+      this.generateOfflineUUID(username),
+      "--accessToken",
+      "null",
+      "--userType",
+      "legacy",
+    ];
+
+    console.log("🚀 Запускаем Minecraft в ПРОСТОМ режиме...");
+    console.log(`📁 Рабочая директория: ${instancePath}`);
+    console.log(
+      `📋 Главный класс: cpw.mods.bootstraplauncher.BootstrapLauncher`
+    );
+    console.log(
+      `📏 Аргументы (${finalArgs.length}):`,
+      finalArgs.slice(0, 10).join(" "),
+      "..."
+    );
+
+    const minecraft = spawn(javaPath, finalArgs, {
+      cwd: instancePath,
+      stdio: ["ignore", "inherit", "inherit"],
+      detached: false,
+      env: {
+        ...process.env,
+        JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
+      },
+    });
+
+    minecraft.on("error", (error) => {
+      console.error("❌ Ошибка запуска процесса:", error);
+      throw error;
+    });
+
+    minecraft.on("exit", (code, signal) => {
+      console.log(
+        `🔴 Minecraft завершился с кодом: ${code}, сигнал: ${signal}`
+      );
+    });
+
+    console.log(`✅ Minecraft процесс запущен (PID: ${minecraft.pid})`);
+    return minecraft;
+  }
+
+  /**
    * Обновленная функция запуска с дополнительной настройкой offline режима
    */
   async launchMinecraft(username, modpack, customMemoryGB) {
@@ -1627,8 +1908,9 @@ class MinecraftLauncher {
       javaInfo.majorVersion
     );
 
-    console.log("🔧 Построение classpath...");
-    const classpath = await this.buildClasspath(instancePath, modpack);
+    // РЕШЕНИЕ ПРОБЛЕМЫ: используем файл с classpath для Windows
+    console.log("🔧 Создание classpath файла...");
+    const classpathFile = await this.createClasspathFile(instancePath, modpack);
 
     // КРИТИЧЕСКИ ВАЖНО: системные свойства для BootstrapLauncher
     const systemProps = [
@@ -1645,22 +1927,24 @@ class MinecraftLauncher {
         `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`,
         `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}.jar`
       )}`,
-      `-DlegacyClassPath=${classpath}`,
       `-DlibraryDirectory=${path.join(instancePath, "libraries")}`,
       `-Dfml.forgeVersion=${modpack.forge_version}`,
       `-Dfml.mcVersion=${modpack.minecraft_version}`,
     ];
 
-    // Финальные JVM аргументы
+    // ИСПРАВЛЕННЫЕ JVM аргументы - используем @classpath файл для Windows
+    const moduleBypassArgs = this.getModuleBypassArgs(javaInfo.majorVersion);
+
     const finalJvmArgs = [
       ...jvmArgs,
+      ...moduleBypassArgs, // ДОБАВЛЕНО: обход модульной системы
       ...systemProps,
-      "-cp",
-      classpath,
+      `-cp`,
+      `@${classpathFile}`,
       this.getMainClass(modpack),
     ];
 
-    // Game аргументы для BootstrapLauncher (упрощенные)
+    // Game аргументы для BootstrapLauncher
     const gameArgs = [
       "--username",
       username,
@@ -1682,9 +1966,14 @@ class MinecraftLauncher {
 
     const allArgs = [...finalJvmArgs, ...gameArgs];
 
-    console.log("🚀 Запускаем Minecraft через BootstrapLauncher...");
+    console.log(
+      "🚀 Запускаем Minecraft через BootstrapLauncher (classpath file mode)..."
+    );
     console.log(`📁 Рабочая директория: ${instancePath}`);
-    console.log(`📋 Bootstrap класс: ${this.getMainClass(modpack)}`);
+    console.log(`📋 Classpath файл: ${classpathFile}`);
+    console.log(
+      `📏 Длина командной строки: ${JSON.stringify(allArgs).length} символов`
+    );
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
@@ -1709,6 +1998,30 @@ class MinecraftLauncher {
 
     console.log(`✅ Minecraft процесс запущен (PID: ${minecraft.pid})`);
     return minecraft;
+  }
+
+  async createClasspathFile(instancePath, modpack) {
+    const tempDir = path.join(instancePath, "temp");
+    const classpathFile = path.join(tempDir, "classpath.txt");
+
+    await fs.ensureDir(tempDir);
+
+    console.log("🔧 Создаем classpath файл для обхода ограничения Windows...");
+
+    // Строим полный classpath
+    const classpath = await this.buildClasspath(instancePath, modpack);
+
+    // Записываем classpath в файл
+    await fs.writeFile(classpathFile, classpath, "utf8");
+
+    console.log(`✅ Создан classpath файл: ${classpathFile}`);
+    console.log(
+      `📏 Classpath содержит ${
+        classpath.split(path.delimiter).length
+      } элементов`
+    );
+
+    return classpathFile;
   }
 
   async ensureForgeStructure(instancePath, modpack) {
@@ -2049,7 +2362,7 @@ ipcMain.handle(
   "launch-minecraft",
   async (event, username, modpack, memoryGB) => {
     try {
-      await launcher.launchMinecraft(username, modpack, memoryGB);
+      await launcher.launchMinecraftVanilla(username, modpack, memoryGB);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };

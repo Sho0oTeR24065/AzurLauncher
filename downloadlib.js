@@ -21,7 +21,7 @@ async function downloadMissingLibraries(
     // КРИТИЧЕСКИЕ БИБЛИОТЕКИ FORGE (ПРОВЕРЕННЫЕ)
     // =============================================
 
-    // ModLauncher - основа Forge (РАБОТАЕТ) - В ДАННОЙ ВЕРСИИ API УЖЕ ВСТРОЕНА
+    // ModLauncher - основа Forge (РАБОТАЕТ)
     {
       url: "https://maven.minecraftforge.net/cpw/mods/modlauncher/10.0.9/modlauncher-10.0.9.jar",
       path: path.join(
@@ -151,7 +151,7 @@ async function downloadMissingLibraries(
       ),
     },
 
-    // ДОБАВИТЬ: ForgeAutoRenamingTool через альтернативную ссылку
+    // SpecialSource для Forge
     {
       url: "https://repo1.maven.org/maven2/net/md-5/SpecialSource/1.11.0/SpecialSource-1.11.0.jar",
       path: path.join(
@@ -177,14 +177,8 @@ async function downloadMissingLibraries(
       ),
     },
 
-    // УБИРАЕМ НЕДОСТУПНЫЕ БИБЛИОТЕКИ:
-    // - mcp_config (404)
-    // - jarhandling (404)
-    // - forgeautorenamingtool (404)
-    // - modlauncher-api (404)
-
     // =============================================
-    // ASM библиотеки - КРИТИЧНЫ (ВСЕ РАБОТАЮТ)
+    // ASM библиотеки - ПОЛНЫЙ НАБОР (КРИТИЧНО!)
     // =============================================
     {
       url: "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.5/asm-9.5.jar",
@@ -246,6 +240,9 @@ async function downloadMissingLibraries(
         "asm-analysis-9.5.jar"
       ),
     },
+
+    // ДОБАВЛЯЕМ НЕДОСТАЮЩИЕ ASM МОДУЛИ - УДАЛЯЕМ НЕСУЩЕСТВУЮЩИЙ:
+    // НЕ ДОБАВЛЯЕМ asm-tree-analysis - его не существует в Maven Central
 
     // =============================================
     // ОСНОВНЫЕ MINECRAFT БИБЛИОТЕКИ (ВСЕ РАБОТАЮТ)
@@ -463,10 +460,16 @@ async function downloadMissingLibraries(
       ),
     },
 
-    // Apache Commons
+    // Apache Commons - ИСПРАВЛЕН ПУТЬ
     {
       url: "https://repo1.maven.org/maven2/commons-io/commons-io/2.11.0/commons-io-2.11.0.jar",
-      path: path.join(libsDir, "commons-io", "2.11.0", "commons-io-2.11.0.jar"),
+      path: path.join(
+        libsDir,
+        "commons-io",
+        "commons-io",
+        "2.11.0",
+        "commons-io-2.11.0.jar"
+      ),
     },
     {
       url: "https://repo1.maven.org/maven2/org/apache/commons/commons-lang3/3.12.0/commons-lang3-3.12.0.jar",
@@ -554,6 +557,7 @@ async function downloadMissingLibraries(
         libsDir,
         "net",
         "sf",
+        "jopt-simple",
         "jopt-simple",
         "5.0.4",
         "jopt-simple-5.0.4.jar"
