@@ -1,8 +1,17 @@
+const fs = require("fs-extra");
+const path = require("path");
+const os = require("os");
+
 async function downloadMissingLibraries(
   instancePath,
   modpack,
-  onProgress = null
+  onProgress = null,
+  launcher = null // ДОБАВИТЬ
 ) {
+  if (!launcher) {
+    // ДОБАВИТЬ
+    throw new Error("Launcher instance is required");
+  }
   const libsDir = path.join(instancePath, "libraries");
   await fs.ensureDir(libsDir);
 
@@ -22,6 +31,19 @@ async function downloadMissingLibraries(
         "modlauncher",
         "10.0.9",
         "modlauncher-10.0.9.jar"
+      ),
+    },
+
+    // JarJarFileSystems - КРИТИЧНО для Forge
+    {
+      url: "https://maven.minecraftforge.net/net/minecraftforge/JarJarFileSystems/0.3.19/JarJarFileSystems-0.3.19.jar",
+      path: path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "JarJarFileSystems",
+        "0.3.19",
+        "JarJarFileSystems-0.3.19.jar"
       ),
     },
 
@@ -713,7 +735,7 @@ async function downloadMissingLibraries(
       console.log(`📥 Скачиваем: ${path.basename(lib.path)}`);
       await fs.ensureDir(path.dirname(lib.path));
       try {
-        await this.downloadFile(lib.url, lib.path, null);
+        await launcher.downloadFile(lib.url, lib.path, null);
         console.log(`✅ Скачано: ${path.basename(lib.path)}`);
       } catch (error) {
         console.log(
@@ -743,7 +765,16 @@ async function downloadMissingLibraries(
   console.log("✅ Скачивание библиотек завершено");
 }
 
-async function downloadNativeLibraries(instancePath, onProgress = null) {
+async function downloadNativeLibraries(
+  instancePath,
+  onProgress = null,
+  launcher = null
+) {
+  // ДОБАВИТЬ launcher
+  if (!launcher) {
+    // ДОБАВИТЬ
+    throw new Error("Launcher instance is required");
+  }
   const platform = os.platform();
   const arch = os.arch();
 
@@ -852,10 +883,10 @@ async function downloadNativeLibraries(instancePath, onProgress = null) {
       console.log(`Скачиваем нативную библиотеку: ${path.basename(lib.path)}`);
       await fs.ensureDir(path.dirname(lib.path));
       try {
-        await this.downloadFile(lib.url, lib.path, null);
+        await launcher.downloadFile(lib.url, lib.path, null);
 
         // Извлекаем нативные файлы в папку natives
-        await this.extractNativesToDir(lib.path, nativesDir);
+        await launcher.extractNativesToDir(lib.path, nativesDir);
         console.log(
           `✅ Успешно скачано и извлечено: ${path.basename(lib.path)}`
         );
@@ -880,4 +911,7 @@ async function downloadNativeLibraries(instancePath, onProgress = null) {
   if (onProgress) onProgress(100);
 }
 
-(module.exports = downloadMissingLibraries), downloadNativeLibraries;
+module.exports = {
+  downloadMissingLibraries,
+  downloadNativeLibraries,
+};

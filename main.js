@@ -987,13 +987,22 @@ class MinecraftLauncher {
       await this.setupModpackStructure(instancePath, modpack);
 
       // ДОБАВИТЬ загрузку компонентов с прогрессом:
-      await downloadMissingLibraries(instancePath, modpack, (progress) => {
-        onProgress(progress, "libraries");
-      });
+      await downloadMissingLibraries(
+        instancePath,
+        modpack,
+        (progress) => {
+          onProgress(progress, "libraries");
+        },
+        this
+      ); // Передаем this для доступа к методам
 
-      await downloadNativeLibraries(instancePath, (progress) => {
-        onProgress(progress, "natives");
-      });
+      await downloadNativeLibraries(
+        instancePath,
+        (progress) => {
+          onProgress(progress, "natives");
+        },
+        this
+      ); // Передаем this для доступа к методам
 
       await this.downloadMinecraftAssets(
         instancePath,
@@ -1746,7 +1755,7 @@ class MinecraftLauncher {
 
       // ДОБАВЛЯЕМ специфичные для Forge аргументы
       "--launchTarget",
-      "forgeclient",
+      "fmlclient",
     ];
 
     const allArgs = [...finalJvmArgs, ...gameArgs];
@@ -1811,7 +1820,7 @@ class MinecraftLauncher {
     console.log(`Скачиваем ассеты для Minecraft ${mcVersion}...`);
 
     // Скачиваем asset index
-    const assetIndexUrl = `https://launchermeta.mojang.com/v1/packages/c9df48efed58511cdd0213c56b9013a7b5c9ac1f/1.20.1.json`;
+    const assetIndexUrl = `https://piston-meta.mojang.com/v1/packages/c9df48efed58511cdd0213c56b9013a7b5c9ac1f/1.20.1.json`;
     const assetIndexPath = path.join(indexesDir, `${mcVersion}.json`);
 
     try {
@@ -2002,6 +2011,16 @@ class MinecraftLauncher {
         "modlauncher-10.0.9.jar"
       ),
 
+      // JarJarFileSystems для поддержки модулей
+      path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "JarJarFileSystems",
+        "0.3.19",
+        "JarJarFileSystems-0.3.19.jar"
+      ),
+
       // КРИТИЧНО: FMLLoader и связанные библиотеки
       path.join(
         libsDir,
@@ -2070,89 +2089,6 @@ class MinecraftLauncher {
       ),
 
       // ASM библиотеки
-      path.join(libsDir, "org", "ow2", "asm", "asm", "9.5", "asm-9.5.jar"),
-      path.join(
-        libsDir,
-        "org",
-        "ow2",
-        "asm",
-        "asm-commons",
-        "9.5",
-        "asm-commons-9.5.jar"
-      ),
-      path.join(
-        libsDir,
-        "org",
-        "ow2",
-        "asm",
-        "asm-tree",
-        "9.5",
-        "asm-tree-9.5.jar"
-      ),
-      path.join(
-        libsDir,
-        "org",
-        "ow2",
-        "asm",
-        "asm-util",
-        "9.5",
-        "asm-util-9.5.jar"
-      ),
-      path.join(
-        libsDir,
-        "org",
-        "ow2",
-        "asm",
-        "asm-analysis",
-        "9.5",
-        "asm-analysis-9.5.jar"
-      ),
-
-      // УБИРАЕМ НЕДОСТУПНЫЕ БИБЛИОТЕКИ:
-      // - forgeautorenamingtool (404)
-      // - jarhandling (404)
-      // - modlauncher-api (404)${modpack.forge_version}`, `fmlcore-1.20.1-${modpack.forge_version}.jar`),
-      path.join(
-        libsDir,
-        "net",
-        "minecraftforge",
-        "javafmllanguage",
-        `1.20.1-${modpack.forge_version}`,
-        `javafmllanguage-1.20.1-${modpack.forge_version}.jar`
-      ),
-      path.join(
-        libsDir,
-        "net",
-        "minecraftforge",
-        "lowcodelanguage",
-        `1.20.1-${modpack.forge_version}`,
-        `lowcodelanguage-1.20.1-${modpack.forge_version}.jar`
-      ),
-      path.join(
-        libsDir,
-        "net",
-        "minecraftforge",
-        "eventbus",
-        "6.0.5",
-        "eventbus-6.0.5.jar"
-      ),
-      path.join(
-        libsDir,
-        "net",
-        "minecraftforge",
-        "coremods",
-        "5.1.6",
-        "coremods-5.1.6.jar"
-      ),
-
-      path.join(
-        libsDir,
-        "cpw",
-        "mods",
-        "securejarhandler",
-        "2.1.10",
-        "securejarhandler-2.1.10.jar"
-      ),
       path.join(libsDir, "org", "ow2", "asm", "asm", "9.5", "asm-9.5.jar"),
       path.join(
         libsDir,
