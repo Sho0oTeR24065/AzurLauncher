@@ -2078,58 +2078,6 @@ Main-Class: cpw.mods.bootstraplauncher.BootstrapLauncher
     return classpath.join(path.delimiter);
   }
 
-  async validateCriticalFiles(instancePath, modpack) {
-    const issues = [];
-
-    // Проверяем главные JAR файлы
-    const mcJar = path.join(
-      instancePath,
-      "versions",
-      modpack.minecraft_version,
-      `${modpack.minecraft_version}.jar`
-    );
-    if (!(await fs.pathExists(mcJar))) {
-      issues.push(
-        `Отсутствует Minecraft JAR: ${modpack.minecraft_version}.jar`
-      );
-    }
-
-    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
-    const forgeJar = path.join(
-      instancePath,
-      "versions",
-      forgeVersion,
-      `${forgeVersion}.jar`
-    );
-    if (!(await fs.pathExists(forgeJar))) {
-      issues.push(`Отсутствует Forge JAR: ${forgeVersion}.jar`);
-    }
-
-    // Проверяем ModLauncher
-    const modLauncherJar = path.join(
-      instancePath,
-      "libraries",
-      "cpw",
-      "mods",
-      "modlauncher",
-      "10.0.9",
-      "modlauncher-10.0.9.jar"
-    );
-    if (!(await fs.pathExists(modLauncherJar))) {
-      issues.push("Отсутствует ModLauncher");
-    }
-
-    if (issues.length > 0) {
-      throw new Error(
-        `Критические файлы отсутствуют:\n${issues.join(
-          "\n"
-        )}\n\nПереустановите модпак.`
-      );
-    }
-
-    return true;
-  }
-
   async createClasspathFile(instancePath, modpack) {
     const tempDir = path.join(instancePath, "temp");
     const classpathFile = path.join(tempDir, "classpath.txt");
