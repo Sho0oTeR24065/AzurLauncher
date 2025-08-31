@@ -801,69 +801,132 @@ class MinecraftLauncher {
     const instancePath = path.join(this.instancesDir, modpack.id);
 
     try {
+      console.log(`🚀 Начинаем скачивание модпака: ${modpack.name}`);
+      console.log(`📂 Zip путь: ${zipPath}`);
+      console.log(`📁 Instance путь: ${instancePath}`);
+      console.log(`🔗 URL: ${modpack.download_url}`);
+
+      // Очистка предыдущих файлов
       if (await fs.pathExists(zipPath)) {
         await fs.remove(zipPath);
+        console.log("🗑️ Удален старый zip файл");
       }
 
       if (await fs.pathExists(instancePath)) {
         await fs.remove(instancePath);
+        console.log("🗑️ Удалена старая папка модпака");
       }
 
+      // Получаем прямую ссылку для скачивания
+      console.log("🔄 Получаем прямую ссылку...");
       const downloadUrl = await this.getYandexDirectLink(modpack.download_url);
+      console.log(`✅ Прямая ссылка получена: ${downloadUrl}`);
+
+      // Отправляем начальный прогресс
+      if (onProgress) {
+        onProgress(0, "modpack");
+      }
+
+      // Скачиваем модпак с детальным логированием
+      console.log("📥 Начинаем загрузку файла...");
       await this.downloadFile(downloadUrl, zipPath, (progress) => {
-        onProgress(progress, "modpack"); // Передаем stage в onProgress
+        if (onProgress) {
+          onProgress(progress, "modpack");
+        }
       });
 
+      // Проверяем размер скачанного файла
       const stats = await fs.stat(zipPath);
+      console.log(
+        `📏 Размер скачанного файла: ${stats.size} байт (${Math.round(
+          stats.size / (1024 * 1024)
+        )} MB)`
+      );
+
       if (stats.size < 1024) {
-        throw new Error("Скачанный файл поврежден");
+        throw new Error("Скачанный файл поврежден или слишком мал");
       }
 
+      console.log("📦 Извлекаем модпак...");
       await this.extractModpack(zipPath, instancePath);
-      onProgress(50, "modpack"); // Модпак извлечен
 
+      if (onProgress) {
+        onProgress(25, "modpack"); // Модпак извлечен
+      }
+
+      console.log("🗑️ Удаляем временный zip...");
       await fs.remove(zipPath);
+
+      console.log("🔧 Настройка структуры модпака...");
       await this.setupModpackStructure(instancePath, modpack);
 
-      // ДОБАВИТЬ загрузку компонентов с прогрессом:
+      if (onProgress) {
+        onProgress(30, "modpack");
+      }
+
+      console.log("📚 Скачиваем библиотеки...");
       await downloadMissingLibraries(
         instancePath,
         modpack,
         (progress) => {
-          onProgress(progress, "libraries");
+          if (onProgress) {
+            onProgress(progress, "libraries");
+          }
         },
         this
-      ); // Передаем this для доступа к методам
+      );
 
+      console.log("🔧 Скачиваем нативные библиотеки...");
       await downloadNativeLibraries(
         instancePath,
         (progress) => {
-          onProgress(progress, "natives");
+          if (onProgress) {
+            onProgress(progress, "natives");
+          }
         },
         this
-      ); // Передаем this для доступа к методам
+      );
 
+      console.log("🎨 Скачиваем ассеты Minecraft...");
       await this.downloadMinecraftAssets(
         instancePath,
         modpack.minecraft_version,
         (progress) => {
-          onProgress(progress, "assets");
+          if (onProgress) {
+            onProgress(progress, "assets");
+          }
         }
       );
 
+      console.log("🔥 Скачиваем Forge клиент...");
       await this.downloadForgeClient(instancePath, modpack, (progress) => {
-        onProgress(progress, "forge");
+        if (onProgress) {
+          onProgress(progress, "forge");
+        }
       });
 
+      console.log("✅ Модпак полностью установлен!");
       return true;
     } catch (error) {
+      console.error("💥 КРИТИЧЕСКАЯ ОШИБКА при скачивании модпака:", error);
+      console.error("Стек ошибки:", error.stack);
+
+      // Детальная очистка при ошибке
       try {
-        if (await fs.pathExists(zipPath)) await fs.remove(zipPath);
-        if (await fs.pathExists(instancePath)) await fs.remove(instancePath);
+        console.log("🧹 Очистка после ошибки...");
+        if (await fs.pathExists(zipPath)) {
+          await fs.remove(zipPath);
+          console.log("🗑️ Удален поврежденный zip");
+        }
+        if (await fs.pathExists(instancePath)) {
+          await fs.remove(instancePath);
+          console.log("🗑️ Удалена поврежденная папка модпака");
+        }
       } catch (cleanupError) {
-        // Игнорируем ошибки очистки
+        console.error("❌ Ошибка очистки:", cleanupError);
       }
-      throw error;
+
+      throw error; // Перебрасываем оригинальную ошибку
     }
   }
 
@@ -953,18 +1016,23 @@ class MinecraftLauncher {
   }
 
   async getYandexDirectLink(shareUrl) {
+    console.log(`🔗 Исходная ссылка: ${shareUrl}`);
+
     return new Promise((resolve, reject) => {
       if (
         shareUrl.includes("downloader.disk.yandex.ru") ||
         shareUrl.includes("getfile.dokpub.com")
       ) {
+        console.log("✅ Прямая ссылка обнаружена");
         resolve(shareUrl);
         return;
       }
 
+      console.log("🔄 Получаем прямую ссылку через API...");
       const apiUrl = `https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=${encodeURIComponent(
         shareUrl
       )}`;
+      console.log(`📡 API URL: ${apiUrl}`);
 
       const request = https.get(apiUrl, (response) => {
         let data = "";
