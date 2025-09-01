@@ -34,6 +34,19 @@ async function downloadMissingLibraries(
       ),
     },
 
+    // TypeTools - ПРАВИЛЬНАЯ ВЕРСИЯ для EventBus 6.0.5
+    {
+      url: "https://repo1.maven.org/maven2/net/jodah/typetools/0.6.3/typetools-0.6.3.jar",
+      path: path.join(
+        libsDir,
+        "net",
+        "jodah",
+        "typetools",
+        "0.6.3",
+        "typetools-0.6.3.jar"
+      ),
+    },
+
     // JarJarFileSystems - КРИТИЧНО для Forge
     {
       url: "https://maven.minecraftforge.net/net/minecraftforge/JarJarFileSystems/0.3.19/JarJarFileSystems-0.3.19.jar",

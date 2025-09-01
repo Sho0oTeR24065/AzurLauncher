@@ -742,9 +742,14 @@ class MinecraftLauncher {
       "-Dlog4j2.formatMsgNoLookups=true",
     ];
 
-    // РАСШИРЕННЫЕ открытия модулей для Java 17+
+    // ИСПРАВЛЕННЫЕ JVM аргументы для Java 17+ (БЕЗ модульной системы)
     if (javaMainVersion >= 17) {
       args.push(
+        // КРИТИЧНО: Полностью отключаем модульную систему Java
+        "-Djdk.module.path=",
+        "-Djdk.module.upgrade.path=",
+        "--illegal-access=permit", // Разрешаем все операции рефлексии
+
         // Базовые пакеты
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.util=ALL-UNNAMED",
@@ -2429,9 +2434,6 @@ class MinecraftLauncher {
 
       // ForgeSPI
       "net/minecraftforge/forgespi/7.0.1/forgespi-7.0.1.jar",
-
-      // Mixin
-      "org/spongepowered/mixin/0.8.5/mixin-0.8.5.jar",
     ];
 
     for (const lib of coreForgeLibs) {
