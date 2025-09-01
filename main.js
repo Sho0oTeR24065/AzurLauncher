@@ -1939,6 +1939,7 @@ class MinecraftLauncher {
    */
   async launchMinecraftUltraDebug(username, modpack, customMemoryGB) {
     const instancePath = path.join(this.instancesDir, modpack.id);
+    await this.ensureMinecraftJar(instancePath, modpack.minecraft_version);
 
     console.log("🔍 === УЛЬТРА-ОТЛАДКА ЗАПУСКА ===");
     console.log(`📁 Instance path: ${instancePath}`);
@@ -1990,7 +1991,7 @@ class MinecraftLauncher {
       launchTarget
     );
 
-    // === ПОСТРОЕНИЕ КОМАНДЫ ЗАПУСКА ===
+    // НОВЫЕ аргументы (ДОБАВИТЬ):
     const jvmArgs = [
       `-Xmx${memory}`,
       "-Xms1G",
@@ -2001,25 +2002,30 @@ class MinecraftLauncher {
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
 
-      // КРИТИЧНО: Полностью отключаем модульную систему Java
-      "-Djdk.module.main=",
-      "-Djdk.module.path=",
-      "-Djdk.module.upgrade.path=",
+      // ПРАВИЛЬНЫЕ аргументы для Forge модульной системы (из официальной документации)
+      "--add-modules",
+      "ALL-MODULE-PATH",
+      "--add-opens",
+      "java.base/java.util.jar=cpw.mods.securejarhandler",
+      "--add-exports",
+      "java.base/sun.security.util=cpw.mods.securejarhandler",
+      "--add-exports",
+      "jdk.naming.dns/com.sun.jndi.dns=java.naming",
 
-      // Системные свойства
+      // Дополнительные системные свойства для Forge
+      `-DlegacyClassPath=${classpath}`,
+      `-DignoreList=bootstraplauncher-1.1.2.jar,securejarhandler-2.1.10.jar,asm-commons-9.5.jar,asm-util-9.5.jar,asm-analysis-9.5.jar,asm-tree-9.5.jar,asm-9.5.jar`,
+      `-DlibraryDirectory=${path.join(instancePath, "libraries")}`,
+
+      // Стандартные системные свойства
       "-Dfml.earlyprogresswindow=false",
       "-Dlog4j2.formatMsgNoLookups=true",
-
-      // УБИРАЕМ ВСЕ --add-modules и --add-opens - они вызывают конфликты!
-      // Вместо этого используем старый подход без модулей
-
-      // Системные свойства для путей
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
       `-Dminecraft.launcher.brand=azurael-launcher`,
       `-Dminecraft.launcher.version=1.0.0`,
 
-      // Classpath
-      "-cp",
+      // Module path (важно для модульной системы)
+      "-p",
       classpath,
 
       // Главный класс
@@ -2072,9 +2078,9 @@ class MinecraftLauncher {
       detached: false,
       env: {
         ...process.env,
-        // Убираем все JAVA_TOOL_OPTIONS что могут конфликтовать с модульной системой
-        JAVA_TOOL_OPTIONS: undefined,
-        _JAVA_OPTIONS: undefined,
+        // УБРАТЬ эти строки:
+        // JAVA_TOOL_OPTIONS: undefined,
+        // _JAVA_OPTIONS: undefined,
 
         // Устанавливаем кодировку
         LC_ALL: "en_US.UTF-8",
@@ -2446,7 +2452,11 @@ class MinecraftLauncher {
       const alreadyAdded = classpath.some(
         (existing) => path.basename(existing) === path.basename(jar)
       );
-      return !alreadyAdded;
+
+      // ИСКЛЮЧАЕМ natives JAR файлы - они не должны быть в classpath
+      const isNativeJar = jar.includes("-natives-");
+
+      return !alreadyAdded && !isNativeJar;
     });
 
     classpath.push(...filteredJars);
@@ -2476,17 +2486,10 @@ class MinecraftLauncher {
 
       const mcUrl = `https://piston-data.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/${mcVersion}.jar`;
 
-      try {
-        await this.downloadFile(mcUrl, mcJar, (progress) => {
-          console.log(`Minecraft JAR progress: ${progress}%`);
-        });
-        console.log("✅ Minecraft JAR скачан");
-      } catch (error) {
-        // Fallback URL
-        const fallbackUrl = `https://launcher.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/${mcVersion}.jar`;
-        await this.downloadFile(fallbackUrl, mcJar);
-        console.log("✅ Minecraft JAR скачан (fallback)");
-      }
+      await this.downloadFile(mcUrl, mcJar, (progress) => {
+        console.log(`Minecraft JAR progress: ${progress}%`);
+      });
+      console.log("✅ Minecraft JAR скачан");
     }
 
     return mcJar;
