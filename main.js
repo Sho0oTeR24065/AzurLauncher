@@ -1497,10 +1497,10 @@ class MinecraftLauncher {
   /**
    * ОТЛАДОЧНЫЙ запуск с детальными логами
    */
-  async launchMinecraftDebug(username, modpack, customMemoryGB) {
+  async launchMinecraftUltraDebug(username, modpack, customMemoryGB) {
     const instancePath = path.join(this.instancesDir, modpack.id);
 
-    console.log("🔍 === НАЧАЛО ОТЛАДКИ ЗАПУСКА ===");
+    console.log("🔍 === УЛЬТРА-ОТЛАДКА ЗАПУСКА ===");
     console.log(`📁 Instance path: ${instancePath}`);
     console.log(`👤 Username: ${username}`);
     console.log(
@@ -1511,35 +1511,60 @@ class MinecraftLauncher {
       throw new Error("Модпак не установлен");
     }
 
+    // === ПРОВЕРКА JAVA ===
     const javaInfo = await this.ensureJavaAvailable();
     const javaPath = javaInfo.path;
     const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
 
     console.log(`☕ Java: ${javaPath} (v${javaInfo.majorVersion})`);
+    console.log(`💾 Memory: ${memory}`);
 
-    await this.debugValidateFiles(instancePath, modpack);
-    const classpath = await this.buildDebugClasspath(instancePath, modpack);
+    // === ДЕТАЛЬНАЯ ПРОВЕРКА СТРУКТУРЫ ===
+    await this.ultraDebugValidateStructure(instancePath, modpack);
 
-    // ✅ АВТОМАТИЧЕСКИ определяем правильный launchTarget
-    const launchTarget = await this.determineCorrectLaunchTarget(
+    // === ПРОВЕРКА КРИТИЧЕСКИХ СЕРВИСОВ ===
+    await this.ultraDebugCheckCriticalServices(instancePath, modpack);
+
+    // === ПОСТРОЕНИЕ CLASSPATH С ПОЛНОЙ ДИАГНОСТИКОЙ ===
+    const classpath = await this.buildUltraDebugClasspath(
       instancePath,
       modpack
     );
-    console.log(`🎯 Использую launchTarget: ${launchTarget}`);
 
-    await this.debugCheckServices(instancePath, modpack);
+    // === ПРОВЕРКА LAUNCH HANDLERS ===
+    const availableHandlers = await this.debugDiscoverAllLaunchHandlers(
+      instancePath,
+      modpack
+    );
+    const launchTarget = this.selectBestLaunchTarget(availableHandlers);
 
+    console.log(`🎯 Выбранный LaunchTarget: ${launchTarget}`);
+
+    // === ПРОВЕРКА TRANSFORM SERVICES ===
+    await this.debugCheckTransformServices(instancePath, modpack);
+
+    // === ФИНАЛЬНАЯ ПРОВЕРКА ПЕРЕД ЗАПУСКОМ ===
+    await this.finalPreLaunchValidation(
+      instancePath,
+      modpack,
+      classpath,
+      launchTarget
+    );
+
+    // === ПОСТРОЕНИЕ КОМАНДЫ ЗАПУСКА ===
     const jvmArgs = [
       `-Xmx${memory}`,
       "-Xms1G",
       "-XX:+UseG1GC",
 
-      // Отладочные флаги
+      // КРИТИЧНЫЕ отладочные флаги
       "-Dlegacy.debugClassLoading=true",
       "-Dlegacy.debugClassLoadingFiner=true",
       "-Dfml.earlyprogresswindow=false",
+      "-Dfml.debugModLoaderClassLoading=true",
+      "-Dnet.minecraftforge.fml.loading.DEBUG=true",
 
-      // Критические пути
+      // Системные свойства
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
       `-Dminecraft.client.jar=${path.join(
         instancePath,
@@ -1548,9 +1573,16 @@ class MinecraftLauncher {
         `${modpack.minecraft_version}.jar`
       )}`,
 
-      // Модульные флаги
+      // Модульные флаги для Java 17+
       "--add-opens=java.base/java.lang=ALL-UNNAMED",
       "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens=java.base/java.security=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
+      "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
 
       // Classpath
       "-cp",
@@ -1560,10 +1592,9 @@ class MinecraftLauncher {
       "cpw.mods.modlauncher.Launcher",
     ];
 
-    // ✅ ИСПРАВЛЕННЫЕ game аргументы с правильным target
     const gameArgs = [
       "--launchTarget",
-      launchTarget, // Теперь автоматически определяется!
+      launchTarget,
       "--gameDir",
       instancePath,
       "--username",
@@ -1578,36 +1609,400 @@ class MinecraftLauncher {
 
     const allArgs = [...jvmArgs, ...gameArgs];
 
-    console.log("🚀 === ЗАПУСК КОМАНДЫ ===");
-    console.log(`🎯 LaunchTarget: ${launchTarget}`);
-    console.log(`Команда: "${javaPath}" ${allArgs.join(" ")}`);
-    console.log(
-      `📏 Общая длина команды: ${JSON.stringify(allArgs).length} символов`
-    );
+    console.log("🚀 === ФИНАЛЬНАЯ КОМАНДА ЗАПУСКА ===");
+    console.log(`Command: "${javaPath}"`);
+    console.log("JVM Args:");
+    jvmArgs.forEach((arg, i) => {
+      console.log(`  [${i}] ${arg}`);
+    });
+    console.log("Game Args:");
+    gameArgs.forEach((arg, i) => {
+      console.log(`  [${i}] ${arg}`);
+    });
+    console.log(`📏 Общая длина: ${JSON.stringify(allArgs).length} символов`);
+
+    // === ЗАПУСК С ДЕТАЛЬНЫМ МОНИТОРИНГОМ ===
+    console.log("🚀 === ЗАПУСК ПРОЦЕССА ===");
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
-      stdio: ["ignore", "inherit", "inherit"],
+      stdio: ["ignore", "pipe", "pipe"], // Захватываем stdout/stderr
       detached: false,
       env: {
         ...process.env,
         JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
+        _JAVA_OPTIONS: "-Dfile.encoding=UTF-8",
       },
     });
 
+    console.log(`✅ Процесс запущен (PID: ${minecraft.pid})`);
+
+    // Логирование вывода в реальном времени
+    minecraft.stdout.on("data", (data) => {
+      const output = data.toString();
+      console.log(`[STDOUT] ${output}`);
+    });
+
+    minecraft.stderr.on("data", (data) => {
+      const output = data.toString();
+      console.log(`[STDERR] ${output}`);
+    });
+
     minecraft.on("error", (error) => {
-      console.error("❌ Ошибка spawn:", error);
+      console.error("❌ Ошибка spawn процесса:", error);
       throw error;
     });
 
     minecraft.on("exit", (code, signal) => {
-      console.log(
-        `🔴 Minecraft завершился с кодом: ${code}, сигнал: ${signal}`
-      );
+      console.log(`🔴 Процесс завершился: код=${code}, сигнал=${signal}`);
+      if (code !== 0) {
+        console.log("❌ НЕНОРМАЛЬНОЕ ЗАВЕРШЕНИЕ ПРОЦЕССА");
+      }
     });
 
-    console.log(`✅ Minecraft запущен (PID: ${minecraft.pid})`);
     return minecraft;
+  }
+
+  async ultraDebugValidateStructure(instancePath, modpack) {
+    console.log("🔍 === УЛЬТРА-ПРОВЕРКА СТРУКТУРЫ ===");
+
+    const criticalPaths = [
+      { name: "Instance root", path: instancePath },
+      { name: "Libraries", path: path.join(instancePath, "libraries") },
+      { name: "Versions", path: path.join(instancePath, "versions") },
+      { name: "Natives", path: path.join(instancePath, "versions", "natives") },
+      { name: "Mods", path: path.join(instancePath, "mods") },
+      { name: "Config", path: path.join(instancePath, "config") },
+    ];
+
+    for (const { name, path: checkPath } of criticalPaths) {
+      const exists = await fs.pathExists(checkPath);
+      console.log(`📁 ${name}: ${exists ? "✅" : "❌"} (${checkPath})`);
+
+      if (exists && name === "Libraries") {
+        // Проверяем количество JAR файлов в libraries
+        const jarCount = await this.countJarFiles(checkPath);
+        console.log(`   📚 JAR файлов в libraries: ${jarCount}`);
+      }
+
+      if (exists && name === "Natives") {
+        // Проверяем нативные файлы
+        const nativeFiles = await fs.readdir(checkPath);
+        const dllFiles = nativeFiles.filter(
+          (f) => f.endsWith(".dll") || f.endsWith(".so") || f.endsWith(".dylib")
+        );
+        console.log(`   🗃️ Нативных файлов: ${dllFiles.length}`);
+        dllFiles.forEach((dll) => console.log(`      - ${dll}`));
+      }
+    }
+
+    // Проверяем Minecraft JAR
+    const mcJar = path.join(
+      instancePath,
+      "versions",
+      modpack.minecraft_version,
+      `${modpack.minecraft_version}.jar`
+    );
+    const mcExists = await fs.pathExists(mcJar);
+    console.log(`📦 Minecraft JAR: ${mcExists ? "✅" : "❌"}`);
+    if (mcExists) {
+      const mcStats = await fs.stat(mcJar);
+      console.log(
+        `   📏 Размер: ${Math.round(mcStats.size / (1024 * 1024))} MB`
+      );
+    }
+
+    // Проверяем Forge JAR
+    const forgeVersion = `${modpack.minecraft_version}-${modpack.modloader}-${modpack.forge_version}`;
+    const forgeJar = path.join(
+      instancePath,
+      "versions",
+      forgeVersion,
+      `${forgeVersion}.jar`
+    );
+    const forgeExists = await fs.pathExists(forgeJar);
+    console.log(`🔥 Forge JAR: ${forgeExists ? "✅" : "❌"}`);
+    if (forgeExists) {
+      const forgeStats = await fs.stat(forgeJar);
+      console.log(
+        `   📏 Размер: ${Math.round(forgeStats.size / (1024 * 1024))} MB`
+      );
+    }
+  }
+
+  async ultraDebugCheckCriticalServices(instancePath, modpack) {
+    console.log("🔍 === КРИТИЧЕСКИЕ СЕРВИСЫ ===");
+
+    const criticalJars = [
+      {
+        name: "ModLauncher",
+        path: path.join(
+          instancePath,
+          "libraries",
+          "cpw",
+          "mods",
+          "modlauncher",
+          "10.0.9",
+          "modlauncher-10.0.9.jar"
+        ),
+        requiredServices: [
+          "cpw.mods.modlauncher.api.ILaunchHandlerService",
+          "cpw.mods.modlauncher.api.ITransformationService",
+        ],
+      },
+      {
+        name: "FMLLoader",
+        path: path.join(
+          instancePath,
+          "libraries",
+          "net",
+          "minecraftforge",
+          "fmlloader",
+          `1.20.1-${modpack.forge_version}`,
+          `fmlloader-1.20.1-${modpack.forge_version}.jar`
+        ),
+        requiredServices: [
+          "cpw.mods.modlauncher.api.ILaunchHandlerService",
+          "cpw.mods.modlauncher.api.ITransformationService",
+        ],
+      },
+    ];
+
+    for (const jar of criticalJars) {
+      console.log(`🔍 === ПРОВЕРКА ${jar.name.toUpperCase()} ===`);
+      console.log(`📁 Путь: ${jar.path}`);
+
+      const exists = await fs.pathExists(jar.path);
+      console.log(`📦 Существует: ${exists ? "✅" : "❌"}`);
+
+      if (!exists) {
+        console.log(`❌ КРИТИЧЕСКАЯ ОШИБКА: ${jar.name} не найден!`);
+        continue;
+      }
+
+      const stats = await fs.stat(jar.path);
+      console.log(`📏 Размер: ${stats.size} байт`);
+
+      // Детальная проверка содержимого JAR
+      await this.ultraDebugJarContent(jar.path, jar.name, jar.requiredServices);
+    }
+  }
+
+  async ultraDebugJarContent(jarPath, jarName, requiredServices = []) {
+    return new Promise((resolve) => {
+      const yauzl = require("yauzl");
+
+      yauzl.open(jarPath, { lazyEntries: true }, (err, zipfile) => {
+        if (err) {
+          console.log(`❌ Ошибка открытия ${jarName}: ${err.message}`);
+          resolve();
+          return;
+        }
+
+        const allEntries = [];
+        const services = [];
+        const serviceContents = {};
+
+        zipfile.readEntry();
+        zipfile.on("entry", (entry) => {
+          allEntries.push(entry.fileName);
+
+          // Сохраняем все найденные сервисы
+          if (entry.fileName.startsWith("META-INF/services/")) {
+            services.push(entry.fileName);
+
+            // Читаем содержимое сервисного файла
+            zipfile.openReadStream(entry, (err, readStream) => {
+              if (!err) {
+                let content = "";
+                readStream.on("data", (chunk) => {
+                  content += chunk.toString();
+                });
+                readStream.on("end", () => {
+                  serviceContents[entry.fileName] = content.trim();
+                  zipfile.readEntry();
+                });
+              } else {
+                zipfile.readEntry();
+              }
+            });
+          } else {
+            zipfile.readEntry();
+          }
+        });
+
+        zipfile.on("end", () => {
+          console.log(`📊 ${jarName} статистика:`);
+          console.log(`   📁 Всего файлов: ${allEntries.length}`);
+          console.log(`   🔧 Services найдено: ${services.length}`);
+
+          if (services.length > 0) {
+            console.log(`   📋 Все сервисы в ${jarName}:`);
+            services.forEach((service) => {
+              console.log(`      - ${service}`);
+              if (serviceContents[service]) {
+                console.log(`        Содержимое:`);
+                serviceContents[service].split("\n").forEach((line) => {
+                  if (line.trim()) {
+                    console.log(`          → ${line.trim()}`);
+                  }
+                });
+              }
+            });
+
+            // Проверяем наличие требуемых сервисов
+            console.log(`   🔍 Проверка требуемых сервисов:`);
+            for (const reqService of requiredServices) {
+              const serviceFile = `META-INF/services/${reqService}`;
+              const found = services.includes(serviceFile);
+              console.log(`      ${reqService}: ${found ? "✅" : "❌"}`);
+
+              if (found && serviceContents[serviceFile]) {
+                console.log(`        Провайдеры:`);
+                serviceContents[serviceFile].split("\n").forEach((provider) => {
+                  if (provider.trim()) {
+                    console.log(`          • ${provider.trim()}`);
+                  }
+                });
+              }
+            }
+          } else {
+            console.log(`   ❌ В ${jarName} НЕТ META-INF/services!`);
+          }
+
+          // Показываем структуру JAR
+          console.log(`   📂 Структура ${jarName} (первые 15 файлов):`);
+          allEntries.slice(0, 15).forEach((entry) => {
+            console.log(`      - ${entry}`);
+          });
+
+          resolve();
+        });
+
+        zipfile.on("error", (err) => {
+          console.log(`❌ Ошибка чтения ${jarName}: ${err.message}`);
+          resolve();
+        });
+      });
+    });
+  }
+
+  async ultraDebugJarContent(jarPath, jarName, requiredServices = []) {
+    return new Promise((resolve) => {
+      const yauzl = require("yauzl");
+
+      yauzl.open(jarPath, { lazyEntries: true }, (err, zipfile) => {
+        if (err) {
+          console.log(`❌ Ошибка открытия ${jarName}: ${err.message}`);
+          resolve();
+          return;
+        }
+
+        const allEntries = [];
+        const services = [];
+        const serviceContents = {};
+
+        zipfile.readEntry();
+        zipfile.on("entry", (entry) => {
+          allEntries.push(entry.fileName);
+
+          // Сохраняем все найденные сервисы
+          if (entry.fileName.startsWith("META-INF/services/")) {
+            services.push(entry.fileName);
+
+            // Читаем содержимое сервисного файла
+            zipfile.openReadStream(entry, (err, readStream) => {
+              if (!err) {
+                let content = "";
+                readStream.on("data", (chunk) => {
+                  content += chunk.toString();
+                });
+                readStream.on("end", () => {
+                  serviceContents[entry.fileName] = content.trim();
+                  zipfile.readEntry();
+                });
+              } else {
+                zipfile.readEntry();
+              }
+            });
+          } else {
+            zipfile.readEntry();
+          }
+        });
+
+        zipfile.on("end", () => {
+          console.log(`📊 ${jarName} статистика:`);
+          console.log(`   📁 Всего файлов: ${allEntries.length}`);
+          console.log(`   🔧 Services найдено: ${services.length}`);
+
+          if (services.length > 0) {
+            console.log(`   📋 Все сервисы в ${jarName}:`);
+            services.forEach((service) => {
+              console.log(`      - ${service}`);
+              if (serviceContents[service]) {
+                console.log(`        Содержимое:`);
+                serviceContents[service].split("\n").forEach((line) => {
+                  if (line.trim()) {
+                    console.log(`          → ${line.trim()}`);
+                  }
+                });
+              }
+            });
+
+            // Проверяем наличие требуемых сервисов
+            console.log(`   🔍 Проверка требуемых сервисов:`);
+            for (const reqService of requiredServices) {
+              const serviceFile = `META-INF/services/${reqService}`;
+              const found = services.includes(serviceFile);
+              console.log(`      ${reqService}: ${found ? "✅" : "❌"}`);
+
+              if (found && serviceContents[serviceFile]) {
+                console.log(`        Провайдеры:`);
+                serviceContents[serviceFile].split("\n").forEach((provider) => {
+                  if (provider.trim()) {
+                    console.log(`          • ${provider.trim()}`);
+                  }
+                });
+              }
+            }
+          } else {
+            console.log(`   ❌ В ${jarName} НЕТ META-INF/services!`);
+          }
+
+          // Показываем структуру JAR
+          console.log(`   📂 Структура ${jarName} (первые 15 файлов):`);
+          allEntries.slice(0, 15).forEach((entry) => {
+            console.log(`      - ${entry}`);
+          });
+
+          resolve();
+        });
+
+        zipfile.on("error", (err) => {
+          console.log(`❌ Ошибка чтения ${jarName}: ${err.message}`);
+          resolve();
+        });
+      });
+    });
+  }
+
+  async countJarFiles(directory) {
+    let count = 0;
+    try {
+      const items = await fs.readdir(directory);
+      for (const item of items) {
+        const itemPath = path.join(directory, item);
+        const stats = await fs.stat(itemPath);
+        if (stats.isDirectory()) {
+          count += await this.countJarFiles(itemPath);
+        } else if (item.endsWith(".jar")) {
+          count++;
+        }
+      }
+    } catch (error) {
+      console.error(`Ошибка подсчета JAR в ${directory}:`, error.message);
+    }
+    return count;
   }
 
   async debugValidateForgeVersion(instancePath, modpack) {
@@ -2261,7 +2656,7 @@ ipcMain.handle(
       console.log("🔍 === ЗАПУСК ОТЛАДОЧНОЙ ВЕРСИИ ===");
 
       // Запускаем отладочную версию
-      await launcher.launchMinecraftDebug(username, modpack, memoryGB);
+      await launcher.launchMinecraftUltraDebug(username, modpack, memoryGB);
       return { success: true };
     } catch (error) {
       console.error("❌ Критическая ошибка запуска:", error.message);
