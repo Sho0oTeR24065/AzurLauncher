@@ -789,11 +789,7 @@ class MinecraftLauncher {
    * Определяет главный класс для современных модлоадеров
    */
   getMainClass(modpack) {
-    if (modpack.modloader === "forge") {
-      // ИСПОЛЬЗУЙТЕ BootstrapLauncher - он правильно настраивает ModLauncher
-      return "cpw.mods.bootstraplauncher.BootstrapLauncher";
-    }
-    return "net.minecraft.client.main.Main";
+    return "cpw.mods.bootstraplauncher.BootstrapLauncher";
   }
 
   async downloadModpack(modpack, onProgress) {
@@ -1933,6 +1929,10 @@ class MinecraftLauncher {
       // Модульные флаги для Java 17+
       "--add-opens=java.base/java.lang=ALL-UNNAMED",
       "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-modules=ALL-SYSTEM",
+      "--illegal-access=permit",
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
       "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
       "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
       "--add-opens=java.base/java.security=ALL-UNNAMED",
@@ -1946,12 +1946,18 @@ class MinecraftLauncher {
       classpath,
 
       // ИСПРАВЛЕННЫЙ главный класс
-      "cpw.mods.modlauncher.Launcher",
+      "cpw.mods.bootstraplauncher.BootstrapLauncher",
     ];
 
     const gameArgs = [
       "--launchTarget",
       launchTarget,
+      "--fml.mcVersion",
+      modpack.minecraft_version,
+      "--fml.forgeVersion",
+      modpack.forge_version,
+      "--fml.mcpVersion",
+      "20230612.114412", // MCP версия для 1.20.1
       "--gameDir",
       instancePath,
       "--username",
@@ -2296,6 +2302,17 @@ class MinecraftLauncher {
     console.log("🔍 === СОЗДАНИЕ ПОЛНОГО CLASSPATH ===");
 
     const classpath = [];
+
+    const bootstrapJar = path.join(
+      instancePath,
+      "libraries",
+      "cpw",
+      "mods",
+      "bootstraplauncher",
+      "1.1.2",
+      "bootstraplauncher-1.1.2.jar"
+    );
+    classpath.push(bootstrapJar);
     const libsDir = path.join(instancePath, "libraries");
 
     // ✅ ПРАВИЛЬНЫЙ порядок библиотек Forge
