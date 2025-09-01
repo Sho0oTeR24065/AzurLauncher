@@ -1499,7 +1499,7 @@ class MinecraftLauncher {
     console.log("🎯 === ОПРЕДЕЛЕНИЕ LAUNCH TARGET (УЛУЧШЕНО) ===");
 
     // Для Forge 1.20.1 всегда используем fmlclient
-    const target = "fmlclient";
+    const target = "forgeclient";
     console.log(`✅ Используем стандартный target для Forge 1.20.1: ${target}`);
 
     // Проверяем что FMLLoader содержит нужные services
