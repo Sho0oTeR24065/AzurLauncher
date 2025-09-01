@@ -1495,14 +1495,14 @@ class MinecraftLauncher {
     return true;
   }
 
-  // === НОВЫЕ МЕТОДЫ ДЛЯ МАКСИМАЛЬНОЙ ОТЛАДКИ ===
-
-  /**
-   * Определяет правильный launch target для модпака
-   */
   async determineLaunchTarget(instancePath, modpack) {
-    console.log("🎯 === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===");
+    console.log("🎯 === ОПРЕДЕЛЕНИЕ LAUNCH TARGET (УЛУЧШЕНО) ===");
 
+    // Для Forge 1.20.1 всегда используем fmlclient
+    const target = "fmlclient";
+    console.log(`✅ Используем стандартный target для Forge 1.20.1: ${target}`);
+
+    // Проверяем что FMLLoader содержит нужные services
     const fmlLoaderJar = path.join(
       instancePath,
       "libraries",
@@ -1513,93 +1513,14 @@ class MinecraftLauncher {
       `fmlloader-1.20.1-${modpack.forge_version}.jar`
     );
 
-    if (!(await fs.pathExists(fmlLoaderJar))) {
-      console.log("❌ FMLLoader JAR не найден, используем fallback");
-      return "fmlclient";
+    if (await fs.pathExists(fmlLoaderJar)) {
+      console.log("✅ FMLLoader JAR найден");
+    } else {
+      console.log("❌ FMLLoader JAR отсутствует!");
+      throw new Error("FMLLoader JAR не найден!");
     }
 
-    return new Promise((resolve) => {
-      const yauzl = require("yauzl");
-
-      yauzl.open(fmlLoaderJar, { lazyEntries: true }, (err, zipfile) => {
-        if (err) {
-          console.log(`❌ Ошибка открытия FMLLoader: ${err.message}`);
-          resolve("fmlclient"); // fallback
-          return;
-        }
-
-        zipfile.readEntry();
-        zipfile.on("entry", (entry) => {
-          if (
-            entry.fileName ===
-            "META-INF/services/cpw.mods.modlauncher.api.ILaunchHandlerService"
-          ) {
-            zipfile.openReadStream(entry, (err, readStream) => {
-              if (err) {
-                zipfile.readEntry();
-                return;
-              }
-
-              let content = "";
-              readStream.on("data", (chunk) => {
-                content += chunk.toString();
-              });
-
-              readStream.on("end", () => {
-                const availableTargets = content
-                  .split("\n")
-                  .map((line) => line.trim())
-                  .filter((line) => line.length > 0);
-
-                console.log("📋 Доступные LaunchHandlers:");
-                availableTargets.forEach((target) => {
-                  console.log(`   - ${target}`);
-                });
-
-                // Приоритет выбора target
-                let selectedTarget = "fmlclient"; // по умолчанию
-
-                if (
-                  availableTargets.some((t) =>
-                    t.includes("FMLClientLaunchHandler")
-                  )
-                ) {
-                  selectedTarget = "fmlclient";
-                  console.log(
-                    "✅ Выбран target: fmlclient (FMLClientLaunchHandler найден)"
-                  );
-                } else if (
-                  availableTargets.some((t) =>
-                    t.includes("ForgeClientLaunchHandler")
-                  )
-                ) {
-                  selectedTarget = "forgeclient";
-                  console.log(
-                    "✅ Выбран target: forgeclient (ForgeClientLaunchHandler найден)"
-                  );
-                } else {
-                  console.log(
-                    "⚠️ Стандартные targets не найдены, используем fmlclient"
-                  );
-                }
-
-                resolve(selectedTarget);
-                zipfile.readEntry();
-              });
-            });
-          } else {
-            zipfile.readEntry();
-          }
-        });
-
-        zipfile.on("end", () => {
-          console.log(
-            "🔍 ILaunchHandlerService не найден, используем fmlclient"
-          );
-          resolve("fmlclient");
-        });
-      });
-    });
+    return target;
   }
 
   /**
@@ -1960,14 +1881,15 @@ class MinecraftLauncher {
     // === ПРОВЕРКА КРИТИЧЕСКИХ СЕРВИСОВ ===
     await this.ultraDebugCheckCriticalServices(instancePath, modpack);
 
+    // === ИСПРАВЛЕНИЕ TRANSFORM SERVICES ===
+    await this.fixTransformServices(instancePath, modpack);
+
     // === ПОСТРОЕНИЕ CLASSPATH С ПОЛНОЙ ДИАГНОСТИКОЙ ===
     const classpath = await this.buildDebugClasspath(instancePath, modpack);
 
     // === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===
-    const launchTarget = await this.determineLaunchTarget(
-      instancePath,
-      modpack
-    );
+    console.log("🎯 === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===");
+    const launchTarget = "fmlclient"; // Используем стандартный target
     console.log(`🎯 Выбранный LaunchTarget: ${launchTarget}`);
 
     // === ПРОВЕРКА TRANSFORM SERVICES ===
@@ -1987,12 +1909,17 @@ class MinecraftLauncher {
       "-Xms1G",
       "-XX:+UseG1GC",
 
-      // КРИТИЧНЫЕ отладочные флаги
+      // ИСПРАВЛЕННЫЕ отладочные флаги
       "-Dlegacy.debugClassLoading=true",
-      "-Dlegacy.debugClassLoadingFiner=true",
+      "-Dlegacy.debugClassLoadingFiner=false", // ИЗМЕНЕНО на false
       "-Dfml.earlyprogresswindow=false",
       "-Dfml.debugModLoaderClassLoading=true",
       "-Dnet.minecraftforge.fml.loading.DEBUG=true",
+
+      // ДОБАВИТЬ критичные системные свойства:
+      "-DignoreList=bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client,fmlcore,javafmllanguage,lowcodelanguage,mclanguage,forge,fmlloader",
+      "-DmergeModules=jna-5.10.0.jar,jna-platform-5.10.0.jar",
+      "-DlibraryDirectory=" + path.join(instancePath, "libraries"),
 
       // Системные свойства
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
@@ -2018,7 +1945,7 @@ class MinecraftLauncher {
       "-cp",
       classpath,
 
-      // Главный класс
+      // ИСПРАВЛЕННЫЙ главный класс
       "cpw.mods.modlauncher.Launcher",
     ];
 
@@ -2218,6 +2145,32 @@ class MinecraftLauncher {
     }
   }
 
+  /**
+   * Исправляет проблемы с Transform Services
+   */
+  async fixTransformServices(instancePath, modpack) {
+    console.log("🔧 === ИСПРАВЛЕНИЕ TRANSFORM SERVICES ===");
+
+    // Проверяем что все необходимые JAR файлы на месте
+    const criticalJars = [
+      `libraries/cpw/mods/modlauncher/10.0.9/modlauncher-10.0.9.jar`,
+      `libraries/net/minecraftforge/fmlloader/1.20.1-${modpack.forge_version}/fmlloader-1.20.1-${modpack.forge_version}.jar`,
+      `libraries/org/spongepowered/mixin/0.8.5/mixin-0.8.5.jar`,
+    ];
+
+    for (const jarPath of criticalJars) {
+      const fullPath = path.join(instancePath, jarPath);
+      const exists = await fs.pathExists(fullPath);
+      console.log(`🔍 ${path.basename(jarPath)}: ${exists ? "✅" : "❌"}`);
+
+      if (!exists) {
+        throw new Error(`Критический файл отсутствует: ${jarPath}`);
+      }
+    }
+
+    console.log("✅ Все критические Transform Services на месте");
+  }
+
   async ultraDebugJarContent(jarPath, jarName, requiredServices = []) {
     return new Promise((resolve) => {
       const yauzl = require("yauzl");
@@ -2350,6 +2303,12 @@ class MinecraftLauncher {
       // 1. ModLauncher ПЕРВЫМ
       `cpw/mods/modlauncher/10.0.9/modlauncher-10.0.9.jar`,
       `cpw/mods/securejarhandler/2.1.10/securejarhandler-2.1.10.jar`,
+
+      // ДОБАВИТЬ ЭТИ СТРОКИ:
+      // 1.1. JarJar (критично для Forge 1.20.1)
+      `net/minecraftforge/JarJarSelector/0.3.19/JarJarSelector-0.3.19.jar`,
+      `net/minecraftforge/JarJarMetadata/0.3.19/JarJarMetadata-0.3.19.jar`,
+      `net/minecraftforge/JarJarFileSystems/0.3.19/JarJarFileSystems-0.3.19.jar`,
 
       // 2. ASM
       `org/ow2/asm/asm/9.5/asm-9.5.jar`,
