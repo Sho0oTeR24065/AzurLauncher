@@ -1976,7 +1976,7 @@ class MinecraftLauncher {
 
     // === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===
     console.log("🎯 === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===");
-    const launchTarget = "fmlclient"; // Используем стандартный target
+    const launchTarget = "forgeclient"; // Используем стандартный target
     console.log(`🎯 Выбранный LaunchTarget: ${launchTarget}`);
 
     // === ПРОВЕРКА TRANSFORM SERVICES ===
@@ -2001,29 +2001,17 @@ class MinecraftLauncher {
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
 
-      // УБИРАЕМ проблемные флаги отладки - они вызывают конфликты
-      // "-Dlegacy.debugClassLoading=true", // УДАЛИТЬ
-      // "-Dlegacy.debugClassLoadingFiner=false", // УДАЛИТЬ
-      // "-Dfml.debugModLoaderClassLoading=true", // УДАЛИТЬ
+      // КРИТИЧНО: Полностью отключаем модульную систему Java
+      "-Djdk.module.main=",
+      "-Djdk.module.path=",
+      "-Djdk.module.upgrade.path=",
 
-      // Оставляем только нужные системные свойства
+      // Системные свойства
       "-Dfml.earlyprogresswindow=false",
       "-Dlog4j2.formatMsgNoLookups=true",
 
-      // КРИТИЧНО: Отключаем модульную систему для совместимости
-      "--add-modules=ALL-SYSTEM",
-      "--add-exports=java.base/sun.security.util=ALL-UNNAMED",
-      "--add-exports=java.desktop/sun.awt=ALL-UNNAMED",
-
-      // Открываем необходимые пакеты для рефлексии
-      "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-      "--add-opens=java.base/java.io=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang=ALL-UNNAMED",
-      "--add-opens=java.base/java.util=ALL-UNNAMED",
-      "--add-opens=java.base/java.text=ALL-UNNAMED",
-      "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+      // УБИРАЕМ ВСЕ --add-modules и --add-opens - они вызывают конфликты!
+      // Вместо этого используем старый подход без модулей
 
       // Системные свойства для путей
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
@@ -2040,7 +2028,7 @@ class MinecraftLauncher {
 
     const gameArgs = [
       "--launchTarget",
-      "fmlclient",
+      "forgeclient", // изменить тут тоже
       "--fml.mcVersion",
       modpack.minecraft_version,
       "--fml.forgeVersion",
@@ -2080,12 +2068,17 @@ class MinecraftLauncher {
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
-      stdio: ["ignore", "pipe", "pipe"], // Захватываем stdout/stderr
+      stdio: ["ignore", "pipe", "pipe"],
       detached: false,
       env: {
         ...process.env,
-        JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
-        _JAVA_OPTIONS: "-Dfile.encoding=UTF-8",
+        // Убираем все JAVA_TOOL_OPTIONS что могут конфликтовать с модульной системой
+        JAVA_TOOL_OPTIONS: undefined,
+        _JAVA_OPTIONS: undefined,
+
+        // Устанавливаем кодировку
+        LC_ALL: "en_US.UTF-8",
+        LANG: "en_US.UTF-8",
       },
     });
 
@@ -2413,10 +2406,10 @@ class MinecraftLauncher {
       "cpw/mods/modlauncher/10.0.9/modlauncher-10.0.9.jar",
       "cpw/mods/securejarhandler/2.1.10/securejarhandler-2.1.10.jar",
 
-      // ASM библиотеки - ВСЕ ОБЯЗАТЕЛЬНЫ
+      // ASM библиотеки - ВСЕ ОБЯЗАТЕЛЬНЫ В ПРАВИЛЬНОМ ПОРЯДКЕ
       "org/ow2/asm/asm/9.5/asm-9.5.jar",
-      "org/ow2/asm/asm-tree/9.5/asm-tree-9.5.jar",
       "org/ow2/asm/asm-commons/9.5/asm-commons-9.5.jar",
+      "org/ow2/asm/asm-tree/9.5/asm-tree-9.5.jar", // ВАЖНО: tree после commons
       "org/ow2/asm/asm-util/9.5/asm-util-9.5.jar",
       "org/ow2/asm/asm-analysis/9.5/asm-analysis-9.5.jar",
 
