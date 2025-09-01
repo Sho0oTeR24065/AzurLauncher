@@ -1494,6 +1494,441 @@ class MinecraftLauncher {
 
     return true;
   }
+
+  // === НОВЫЕ МЕТОДЫ ДЛЯ МАКСИМАЛЬНОЙ ОТЛАДКИ ===
+
+  /**
+   * Определяет правильный launch target для модпака
+   */
+  async determineLaunchTarget(instancePath, modpack) {
+    console.log("🎯 === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===");
+
+    const fmlLoaderJar = path.join(
+      instancePath,
+      "libraries",
+      "net",
+      "minecraftforge",
+      "fmlloader",
+      `1.20.1-${modpack.forge_version}`,
+      `fmlloader-1.20.1-${modpack.forge_version}.jar`
+    );
+
+    if (!(await fs.pathExists(fmlLoaderJar))) {
+      console.log("❌ FMLLoader JAR не найден, используем fallback");
+      return "fmlclient";
+    }
+
+    return new Promise((resolve) => {
+      const yauzl = require("yauzl");
+
+      yauzl.open(fmlLoaderJar, { lazyEntries: true }, (err, zipfile) => {
+        if (err) {
+          console.log(`❌ Ошибка открытия FMLLoader: ${err.message}`);
+          resolve("fmlclient"); // fallback
+          return;
+        }
+
+        zipfile.readEntry();
+        zipfile.on("entry", (entry) => {
+          if (
+            entry.fileName ===
+            "META-INF/services/cpw.mods.modlauncher.api.ILaunchHandlerService"
+          ) {
+            zipfile.openReadStream(entry, (err, readStream) => {
+              if (err) {
+                zipfile.readEntry();
+                return;
+              }
+
+              let content = "";
+              readStream.on("data", (chunk) => {
+                content += chunk.toString();
+              });
+
+              readStream.on("end", () => {
+                const availableTargets = content
+                  .split("\n")
+                  .map((line) => line.trim())
+                  .filter((line) => line.length > 0);
+
+                console.log("📋 Доступные LaunchHandlers:");
+                availableTargets.forEach((target) => {
+                  console.log(`   - ${target}`);
+                });
+
+                // Приоритет выбора target
+                let selectedTarget = "fmlclient"; // по умолчанию
+
+                if (
+                  availableTargets.some((t) =>
+                    t.includes("FMLClientLaunchHandler")
+                  )
+                ) {
+                  selectedTarget = "fmlclient";
+                  console.log(
+                    "✅ Выбран target: fmlclient (FMLClientLaunchHandler найден)"
+                  );
+                } else if (
+                  availableTargets.some((t) =>
+                    t.includes("ForgeClientLaunchHandler")
+                  )
+                ) {
+                  selectedTarget = "forgeclient";
+                  console.log(
+                    "✅ Выбран target: forgeclient (ForgeClientLaunchHandler найден)"
+                  );
+                } else {
+                  console.log(
+                    "⚠️ Стандартные targets не найдены, используем fmlclient"
+                  );
+                }
+
+                resolve(selectedTarget);
+                zipfile.readEntry();
+              });
+            });
+          } else {
+            zipfile.readEntry();
+          }
+        });
+
+        zipfile.on("end", () => {
+          console.log(
+            "🔍 ILaunchHandlerService не найден, используем fmlclient"
+          );
+          resolve("fmlclient");
+        });
+      });
+    });
+  }
+
+  /**
+   * Проверяет Transform Services
+   */
+  async debugCheckTransformServices(instancePath, modpack) {
+    console.log("🔍 === ПРОВЕРКА TRANSFORM SERVICES ===");
+
+    const transformServiceJars = [
+      {
+        name: "FMLLoader",
+        path: path.join(
+          instancePath,
+          "libraries",
+          "net",
+          "minecraftforge",
+          "fmlloader",
+          `1.20.1-${modpack.forge_version}`,
+          `fmlloader-1.20.1-${modpack.forge_version}.jar`
+        ),
+      },
+      {
+        name: "Mixin",
+        path: path.join(
+          instancePath,
+          "libraries",
+          "org",
+          "spongepowered",
+          "mixin",
+          "0.8.5",
+          "mixin-0.8.5.jar"
+        ),
+      },
+    ];
+
+    for (const jar of transformServiceJars) {
+      console.log(`🔍 Проверяем Transform Services в ${jar.name}:`);
+      console.log(`   📁 Путь: ${jar.path}`);
+
+      const exists = await fs.pathExists(jar.path);
+      console.log(`   📦 Существует: ${exists ? "✅" : "❌"}`);
+
+      if (exists) {
+        await this.checkTransformServicesInJar(jar.path, jar.name);
+      }
+    }
+  }
+
+  /**
+   * Проверяет Transform Services в конкретном JAR файле
+   */
+  async checkTransformServicesInJar(jarPath, jarName) {
+    return new Promise((resolve) => {
+      const yauzl = require("yauzl");
+
+      yauzl.open(jarPath, { lazyEntries: true }, (err, zipfile) => {
+        if (err) {
+          console.log(`   ❌ Ошибка открытия ${jarName}: ${err.message}`);
+          resolve();
+          return;
+        }
+
+        const transformServices = [];
+
+        zipfile.readEntry();
+        zipfile.on("entry", (entry) => {
+          if (
+            entry.fileName ===
+            "META-INF/services/cpw.mods.modlauncher.api.ITransformationService"
+          ) {
+            zipfile.openReadStream(entry, (err, readStream) => {
+              if (!err) {
+                let content = "";
+                readStream.on("data", (chunk) => {
+                  content += chunk.toString();
+                });
+                readStream.on("end", () => {
+                  const services = content
+                    .split("\n")
+                    .map((line) => line.trim())
+                    .filter((line) => line.length > 0);
+
+                  console.log(`   🔧 Transform Services в ${jarName}:`);
+                  services.forEach((service) => {
+                    console.log(`      • ${service}`);
+                  });
+
+                  zipfile.readEntry();
+                });
+              } else {
+                zipfile.readEntry();
+              }
+            });
+          } else {
+            zipfile.readEntry();
+          }
+        });
+
+        zipfile.on("end", () => {
+          if (transformServices.length === 0) {
+            console.log(`   ❌ Transform Services не найдены в ${jarName}`);
+          }
+          resolve();
+        });
+      });
+    });
+  }
+
+  /**
+   * Финальная проверка перед запуском
+   */
+  async finalPreLaunchValidation(
+    instancePath,
+    modpack,
+    classpath,
+    launchTarget
+  ) {
+    console.log("🔍 === ФИНАЛЬНАЯ ПРОВЕРКА ПЕРЕД ЗАПУСКОМ ===");
+
+    // 1. Проверяем classpath
+    const classpathParts = classpath.split(path.delimiter);
+    console.log(`📚 Classpath содержит ${classpathParts.length} файлов`);
+
+    let missingFiles = 0;
+    for (const file of classpathParts) {
+      const exists = await fs.pathExists(file);
+      if (!exists) {
+        console.log(`❌ ОТСУТСТВУЕТ в classpath: ${file}`);
+        missingFiles++;
+      }
+    }
+
+    if (missingFiles > 0) {
+      console.log(
+        `⚠️ ВНИМАНИЕ: ${missingFiles} файлов отсутствуют в classpath!`
+      );
+    } else {
+      console.log("✅ Все файлы classpath найдены");
+    }
+
+    // 2. Проверяем natives
+    const nativesDir = path.join(instancePath, "versions", "natives");
+    const nativesExists = await fs.pathExists(nativesDir);
+    console.log(`🗃️ Natives директория: ${nativesExists ? "✅" : "❌"}`);
+
+    if (nativesExists) {
+      const nativeFiles = await fs.readdir(nativesDir);
+      const nativeLibs = nativeFiles.filter(
+        (f) => f.endsWith(".dll") || f.endsWith(".so") || f.endsWith(".dylib")
+      );
+      console.log(`   📦 Нативных библиотек: ${nativeLibs.length}`);
+
+      if (nativeLibs.length === 0) {
+        console.log("❌ КРИТИЧНО: Нативные библиотеки не найдены!");
+      }
+    }
+
+    // 3. Проверяем Minecraft JAR
+    const mcJar = path.join(
+      instancePath,
+      "versions",
+      modpack.minecraft_version,
+      `${modpack.minecraft_version}.jar`
+    );
+    const mcExists = await fs.pathExists(mcJar);
+    console.log(`📦 Minecraft JAR: ${mcExists ? "✅" : "❌"}`);
+
+    if (!mcExists) {
+      throw new Error("КРИТИЧЕСКАЯ ОШИБКА: Minecraft JAR не найден!");
+    }
+
+    // 4. Проверяем launch target
+    console.log(`🎯 Launch Target: ${launchTarget}`);
+    if (!launchTarget || launchTarget === "undefined") {
+      throw new Error("КРИТИЧЕСКАЯ ОШИБКА: Launch Target не определен!");
+    }
+
+    // 5. Проверяем мод файлы
+    const modsDir = path.join(instancePath, "mods");
+    const modsExists = await fs.pathExists(modsDir);
+    console.log(`📁 Mods директория: ${modsExists ? "✅" : "❌"}`);
+
+    if (modsExists) {
+      const modFiles = await fs.readdir(modsDir);
+      const jarMods = modFiles.filter((f) => f.endsWith(".jar"));
+      console.log(`   🎮 Модов найдено: ${jarMods.length}`);
+    }
+
+    console.log("✅ Финальная проверка завершена");
+  }
+
+  /**
+   * Обнаружение всех доступных Launch Handlers
+   */
+  async debugDiscoverAllLaunchHandlers(instancePath, modpack) {
+    console.log("🔍 === ПОИСК ВСЕХ LAUNCH HANDLERS ===");
+
+    const handlers = [];
+    const libsDir = path.join(instancePath, "libraries");
+
+    // Рекурсивно ищем все JAR файлы с Launch Handlers
+    const allJars = await this.findJarFiles(libsDir);
+
+    console.log(
+      `📚 Проверяем ${allJars.length} JAR файлов на наличие Launch Handlers...`
+    );
+
+    for (const jarFile of allJars) {
+      try {
+        const jarHandlers = await this.findLaunchHandlersInJar(jarFile);
+        if (jarHandlers.length > 0) {
+          handlers.push({
+            jar: path.basename(jarFile),
+            path: jarFile,
+            handlers: jarHandlers,
+          });
+        }
+      } catch (error) {
+        // Игнорируем ошибки при чтении отдельных JAR файлов
+      }
+    }
+
+    console.log(`🎯 Найдено JAR файлов с Launch Handlers: ${handlers.length}`);
+    handlers.forEach((entry) => {
+      console.log(`   📦 ${entry.jar}:`);
+      entry.handlers.forEach((handler) => {
+        console.log(`      • ${handler}`);
+      });
+    });
+
+    return handlers;
+  }
+
+  /**
+   * Находит Launch Handlers в конкретном JAR файле
+   */
+  async findLaunchHandlersInJar(jarPath) {
+    return new Promise((resolve) => {
+      const yauzl = require("yauzl");
+      const handlers = [];
+
+      yauzl.open(jarPath, { lazyEntries: true }, (err, zipfile) => {
+        if (err) {
+          resolve([]);
+          return;
+        }
+
+        zipfile.readEntry();
+        zipfile.on("entry", (entry) => {
+          if (
+            entry.fileName ===
+            "META-INF/services/cpw.mods.modlauncher.api.ILaunchHandlerService"
+          ) {
+            zipfile.openReadStream(entry, (err, readStream) => {
+              if (!err) {
+                let content = "";
+                readStream.on("data", (chunk) => {
+                  content += chunk.toString();
+                });
+                readStream.on("end", () => {
+                  const services = content
+                    .split("\n")
+                    .map((line) => line.trim())
+                    .filter((line) => line.length > 0);
+                  handlers.push(...services);
+                  zipfile.readEntry();
+                });
+              } else {
+                zipfile.readEntry();
+              }
+            });
+          } else {
+            zipfile.readEntry();
+          }
+        });
+
+        zipfile.on("end", () => {
+          resolve(handlers);
+        });
+      });
+    });
+  }
+
+  /**
+   * Выбирает лучший Launch Target из доступных
+   */
+  selectBestLaunchTarget(availableHandlers) {
+    console.log("🎯 === ВЫБОР ЛУЧШЕГО LAUNCH TARGET ===");
+
+    if (!availableHandlers || availableHandlers.length === 0) {
+      console.log("⚠️ Нет доступных handlers, используем fallback");
+      return "fmlclient";
+    }
+
+    // Собираем все handlers в один список
+    const allHandlers = [];
+    availableHandlers.forEach((entry) => {
+      entry.handlers.forEach((handler) => {
+        allHandlers.push(handler);
+      });
+    });
+
+    console.log("📋 Все доступные handlers:");
+    allHandlers.forEach((handler) => {
+      console.log(`   • ${handler}`);
+    });
+
+    // Приоритетный выбор
+    const priorities = [
+      { pattern: /FMLClientLaunchHandler/i, target: "fmlclient" },
+      { pattern: /ForgeClientLaunchHandler/i, target: "forgeclient" },
+      { pattern: /ClientLaunchHandler/i, target: "client" },
+      { pattern: /MinecraftClientLaunchHandler/i, target: "client" },
+    ];
+
+    for (const priority of priorities) {
+      const found = allHandlers.find((handler) =>
+        priority.pattern.test(handler)
+      );
+      if (found) {
+        console.log(`✅ Выбран target: ${priority.target} (найден ${found})`);
+        return priority.target;
+      }
+    }
+
+    console.log("⚠️ Подходящий handler не найден, используем fmlclient");
+    return "fmlclient";
+  }
+
   /**
    * ОТЛАДОЧНЫЙ запуск с детальными логами
    */
@@ -1527,6 +1962,24 @@ class MinecraftLauncher {
 
     // === ПОСТРОЕНИЕ CLASSPATH С ПОЛНОЙ ДИАГНОСТИКОЙ ===
     const classpath = await this.buildDebugClasspath(instancePath, modpack);
+
+    // === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===
+    const launchTarget = await this.determineLaunchTarget(
+      instancePath,
+      modpack
+    );
+    console.log(`🎯 Выбранный LaunchTarget: ${launchTarget}`);
+
+    // === ПРОВЕРКА TRANSFORM SERVICES ===
+    await this.debugCheckTransformServices(instancePath, modpack);
+
+    // === ФИНАЛЬНАЯ ПРОВЕРКА ПЕРЕД ЗАПУСКОМ ===
+    await this.finalPreLaunchValidation(
+      instancePath,
+      modpack,
+      classpath,
+      launchTarget
+    );
 
     // === ПОСТРОЕНИЕ КОМАНДЫ ЗАПУСКА ===
     const jvmArgs = [
@@ -1763,105 +2216,6 @@ class MinecraftLauncher {
       // Детальная проверка содержимого JAR
       await this.ultraDebugJarContent(jar.path, jar.name, jar.requiredServices);
     }
-  }
-
-  async ultraDebugJarContent(jarPath, jarName, requiredServices = []) {
-    return new Promise((resolve) => {
-      const yauzl = require("yauzl");
-
-      yauzl.open(jarPath, { lazyEntries: true }, (err, zipfile) => {
-        if (err) {
-          console.log(`❌ Ошибка открытия ${jarName}: ${err.message}`);
-          resolve();
-          return;
-        }
-
-        const allEntries = [];
-        const services = [];
-        const serviceContents = {};
-
-        zipfile.readEntry();
-        zipfile.on("entry", (entry) => {
-          allEntries.push(entry.fileName);
-
-          // Сохраняем все найденные сервисы
-          if (entry.fileName.startsWith("META-INF/services/")) {
-            services.push(entry.fileName);
-
-            // Читаем содержимое сервисного файла
-            zipfile.openReadStream(entry, (err, readStream) => {
-              if (!err) {
-                let content = "";
-                readStream.on("data", (chunk) => {
-                  content += chunk.toString();
-                });
-                readStream.on("end", () => {
-                  serviceContents[entry.fileName] = content.trim();
-                  zipfile.readEntry();
-                });
-              } else {
-                zipfile.readEntry();
-              }
-            });
-          } else {
-            zipfile.readEntry();
-          }
-        });
-
-        zipfile.on("end", () => {
-          console.log(`📊 ${jarName} статистика:`);
-          console.log(`   📁 Всего файлов: ${allEntries.length}`);
-          console.log(`   🔧 Services найдено: ${services.length}`);
-
-          if (services.length > 0) {
-            console.log(`   📋 Все сервисы в ${jarName}:`);
-            services.forEach((service) => {
-              console.log(`      - ${service}`);
-              if (serviceContents[service]) {
-                console.log(`        Содержимое:`);
-                serviceContents[service].split("\n").forEach((line) => {
-                  if (line.trim()) {
-                    console.log(`          → ${line.trim()}`);
-                  }
-                });
-              }
-            });
-
-            // Проверяем наличие требуемых сервисов
-            console.log(`   🔍 Проверка требуемых сервисов:`);
-            for (const reqService of requiredServices) {
-              const serviceFile = `META-INF/services/${reqService}`;
-              const found = services.includes(serviceFile);
-              console.log(`      ${reqService}: ${found ? "✅" : "❌"}`);
-
-              if (found && serviceContents[serviceFile]) {
-                console.log(`        Провайдеры:`);
-                serviceContents[serviceFile].split("\n").forEach((provider) => {
-                  if (provider.trim()) {
-                    console.log(`          • ${provider.trim()}`);
-                  }
-                });
-              }
-            }
-          } else {
-            console.log(`   ❌ В ${jarName} НЕТ META-INF/services!`);
-          }
-
-          // Показываем структуру JAR
-          console.log(`   📂 Структура ${jarName} (первые 15 файлов):`);
-          allEntries.slice(0, 15).forEach((entry) => {
-            console.log(`      - ${entry}`);
-          });
-
-          resolve();
-        });
-
-        zipfile.on("error", (err) => {
-          console.log(`❌ Ошибка чтения ${jarName}: ${err.message}`);
-          resolve();
-        });
-      });
-    });
   }
 
   async ultraDebugJarContent(jarPath, jarName, requiredServices = []) {
