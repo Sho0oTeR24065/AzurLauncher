@@ -164,19 +164,6 @@ async function downloadMissingLibraries(
       ),
     },
 
-    // Mixin - КРИТИЧНО для модов
-    {
-      url: "https://repo1.maven.org/maven2/org/spongepowered/mixin/0.8.5/mixin-0.8.5.jar",
-      path: path.join(
-        libsDir,
-        "org",
-        "spongepowered",
-        "mixin",
-        "0.8.5",
-        "mixin-0.8.5.jar"
-      ),
-    },
-
     // =============================================
     // ASM библиотеки - ПОЛНЫЙ НАБОР (КРИТИЧНО!)
     // =============================================
@@ -672,6 +659,51 @@ async function downloadMissingLibraries(
       ),
     },
 
+    {
+      url: "https://maven.minecraftforge.net/net/minecraftforge/JarJarSelector/0.3.19/JarJarSelector-0.3.19.jar",
+      path: path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "JarJarSelector",
+        "0.3.19",
+        "JarJarSelector-0.3.19.jar"
+      ),
+    },
+    {
+      url: "https://maven.minecraftforge.net/net/minecraftforge/JarJarMetadata/0.3.19/JarJarMetadata-0.3.19.jar",
+      path: path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "JarJarMetadata",
+        "0.3.19",
+        "JarJarMetadata-0.3.19.jar"
+      ),
+    },
+    {
+      url: "https://maven.minecraftforge.net/net/minecraftforge/mclanguage/1.20.1-47.3.33/mclanguage-1.20.1-47.3.33.jar",
+      path: path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "mclanguage",
+        "1.20.1-47.3.33",
+        "mclanguage-1.20.1-47.3.33.jar"
+      ),
+    },
+    {
+      url: "https://maven.minecraftforge.net/net/minecraftforge/forgespi/7.0.1/forgespi-7.0.1.jar",
+      path: path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "forgespi",
+        "7.0.1",
+        "forgespi-7.0.1.jar"
+      ),
+    },
+
     // =============================================
     // LWJGL БИБЛИОТЕКИ (ВСЕ РАБОТАЮТ)
     // =============================================
@@ -766,6 +798,21 @@ async function downloadMissingLibraries(
       await fs.ensureDir(path.dirname(lib.path));
       try {
         await launcher.downloadFile(lib.url, lib.path, null);
+        const stats = await fs.stat(lib.path);
+        if (stats.size < 1024) {
+          console.log(
+            `❌ Скачан поврежденный файл: ${path.basename(lib.path)} (размер: ${
+              stats.size
+            } байт)`
+          );
+          await fs.remove(lib.path);
+          throw new Error(`Поврежденная загрузка: ${path.basename(lib.path)}`);
+        }
+        console.log(
+          `✅ Скачано: ${path.basename(lib.path)} (${Math.round(
+            stats.size / 1024
+          )} KB)`
+        );
         console.log(`✅ Скачано: ${path.basename(lib.path)}`);
       } catch (error) {
         console.log(
