@@ -1,50 +1,58 @@
 {
-  "name": "community-minecraft-launcher",
+  "name": "azurael-launcher",
   "version": "1.0.0",
-  "description": "Простой лаунчер для модпаков Minecraft",
+  "description": "Minecraft модпак лаунчер",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "dev": "electron . --dev",
     "build": "electron-builder",
     "build-win": "electron-builder --win",
-    "dist": "electron-builder --publish=never"
+    "build-mac": "electron-builder --mac",
+    "build-linux": "electron-builder --linux"
   },
-  "author": "Shooter",
+  "author": "Azurael Team",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^22.3.27",
+    "electron": "^22.0.0",
     "electron-builder": "^23.6.0"
   },
   "dependencies": {
     "fs-extra": "^11.1.0",
-    "jszip": "^3.10.1",
-    "tar": "^6.2.1",
-    "yauzl": "^2.10.0"
+    "yauzl": "^2.10.0",
+    "tar": "^6.1.13"
   },
   "build": {
-    "appId": "com.community.minecraft.launcher",
+    "appId": "com.azurael.launcher",
     "productName": "Azurael Launcher",
     "directories": {
       "output": "dist"
     },
     "files": [
       "**/*",
-      "!node_modules/electron/**/*"
+      "!node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!node_modules/*.d.ts",
+      "!node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
     ],
     "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "assets/icon.ico"
+      "target": "nsis",
+      "icon": "assets/icon.png"
     },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
     }
   }
 }

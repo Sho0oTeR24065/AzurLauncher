@@ -647,6 +647,231 @@ class MinecraftLauncher {
     });
   }
 
+  async downloadJava21() {
+    const platform = os.platform();
+    const arch = os.arch();
+
+    // Определяем URL для скачивания Java 21
+    let downloadUrl, fileName, extractDir;
+
+    if (platform === "win32") {
+      if (arch === "x64") {
+        downloadUrl =
+          "https://download.oracle.com/java/21/latest/jdk-21_windows-x64_bin.zip";
+        fileName = "jdk-21_windows-x64_bin.zip";
+      } else {
+        throw new Error("Неподдерживаемая архитектура Windows");
+      }
+    } else if (platform === "darwin") {
+      if (arch === "x64") {
+        downloadUrl =
+          "https://download.oracle.com/java/21/latest/jdk-21_macos-x64_bin.tar.gz";
+        fileName = "jdk-21_macos-x64_bin.tar.gz";
+      } else if (arch === "arm64") {
+        downloadUrl =
+          "https://download.oracle.com/java/21/latest/jdk-21_macos-aarch64_bin.tar.gz";
+        fileName = "jdk-21_macos-aarch64_bin.tar.gz";
+      } else {
+        throw new Error("Неподдерживаемая архитектура macOS");
+      }
+    } else if (platform === "linux") {
+      if (arch === "x64") {
+        downloadUrl =
+          "https://download.oracle.com/java/21/latest/jdk-21_linux-x64_bin.tar.gz";
+        fileName = "jdk-21_linux-x64_bin.tar.gz";
+      } else {
+        throw new Error("Неподдерживаемая архитектура Linux");
+      }
+    } else {
+      throw new Error("Неподдерживаемая операционная система");
+    }
+
+    const javaDownloadPath = path.join(this.tempDir, fileName);
+    const javaInstallDir = path.join(this.javaDir, "java21");
+
+    console.log(`Скачиваем Java 21 с ${downloadUrl}`);
+
+    // Скачиваем файл
+    await this.downloadFile(downloadUrl, javaDownloadPath, (progress) => {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send("java-download-progress", progress);
+      }
+    });
+
+    console.log("Извлекаем Java 21...");
+
+    // Очищаем папку установки если она существует
+    if (await fs.pathExists(javaInstallDir)) {
+      await fs.remove(javaInstallDir);
+    }
+    await fs.ensureDir(javaInstallDir);
+
+    if (fileName.endsWith(".zip")) {
+      await this.extractJavaZip(javaDownloadPath, javaInstallDir);
+    } else if (fileName.endsWith(".tar.gz")) {
+      await this.extractJavaTarGz(javaDownloadPath, javaInstallDir);
+    }
+
+    // Удаляем скачанный файл
+    await fs.remove(javaDownloadPath);
+
+    // Находим исполняемый файл Java
+    const javaExecutable = await this.findJavaExecutableInDir(javaInstallDir);
+
+    if (!javaExecutable) {
+      throw new Error("Не удалось найти исполняемый файл Java после установки");
+    }
+
+    // Проверяем что Java работает
+    const javaInfo = await this.checkJavaCompatibility(javaExecutable);
+    if (!javaInfo.available || !javaInfo.compatible) {
+      throw new Error("Установленная Java не работает корректно");
+    }
+
+    console.log(`Java 21 успешно установлена: ${javaExecutable}`);
+    return javaExecutable;
+  }
+
+  async extractJavaZip(zipPath, extractDir) {
+    return new Promise((resolve, reject) => {
+      yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
+        if (err) return reject(err);
+
+        zipfile.readEntry();
+        zipfile.on("entry", (entry) => {
+          const entryPath = path.join(extractDir, entry.fileName);
+
+          if (/\/$/.test(entry.fileName)) {
+            fs.ensureDir(entryPath, (err) => {
+              if (err) return reject(err);
+              zipfile.readEntry();
+            });
+          } else {
+            fs.ensureDir(path.dirname(entryPath), (err) => {
+              if (err) return reject(err);
+
+              zipfile.openReadStream(entry, (err, readStream) => {
+                if (err) return reject(err);
+
+                const writeStream = fs.createWriteStream(entryPath);
+                readStream.pipe(writeStream);
+                writeStream.on("close", () => {
+                  // Делаем файл исполняемым на Unix системах
+                  if (
+                    entry.fileName.includes("bin/java") &&
+                    os.platform() !== "win32"
+                  ) {
+                    fs.chmod(entryPath, 0o755, () => {
+                      zipfile.readEntry();
+                    });
+                  } else {
+                    zipfile.readEntry();
+                  }
+                });
+              });
+            });
+          }
+        });
+
+        zipfile.on("end", () => {
+          resolve();
+        });
+      });
+    });
+  }
+
+  async extractJavaTarGz(tarPath, extractDir) {
+    return new Promise((resolve, reject) => {
+      const { spawn } = require("child_process");
+
+      const tar = spawn(
+        "tar",
+        ["-xzf", tarPath, "-C", extractDir, "--strip-components=1"],
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+        }
+      );
+
+      tar.on("close", (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`Ошибка извлечения tar.gz: код ${code}`));
+        }
+      });
+
+      tar.on("error", (error) => {
+        reject(error);
+      });
+    });
+  }
+
+  async findJavaExecutableInDir(dir) {
+    const platform = os.platform();
+    const javaFileName = platform === "win32" ? "java.exe" : "java";
+
+    // Ищем в bin подпапке
+    const binDir = path.join(dir, "bin");
+    if (await fs.pathExists(binDir)) {
+      const javaPath = path.join(binDir, javaFileName);
+      if (await fs.pathExists(javaPath)) {
+        return javaPath;
+      }
+    }
+
+    // Ищем в подпапках (на случай если структура отличается)
+    try {
+      const entries = await fs.readdir(dir);
+
+      for (const entry of entries) {
+        const entryPath = path.join(dir, entry);
+        const stat = await fs.stat(entryPath);
+
+        if (stat.isDirectory()) {
+          const possibleJava = await this.findJavaExecutableInDir(entryPath);
+          if (possibleJava) {
+            return possibleJava;
+          }
+        }
+      }
+    } catch (error) {
+      // Игнорируем ошибки чтения директории
+    }
+
+    return null;
+  }
+
+  async autoSelectDownloadedJava() {
+    const javaInstallDir = path.join(this.javaDir, "java21");
+
+    if (!(await fs.pathExists(javaInstallDir))) {
+      return { success: false, message: "Скачанная Java не найдена" };
+    }
+
+    const javaExecutable = await this.findJavaExecutableInDir(javaInstallDir);
+
+    if (!javaExecutable) {
+      return { success: false, message: "Исполняемый файл Java не найден" };
+    }
+
+    const javaInfo = await this.checkJavaCompatibility(javaExecutable);
+
+    if (!javaInfo.available || !javaInfo.compatible) {
+      return { success: false, message: "Скачанная Java не работает" };
+    }
+
+    // Сохраняем путь к Java в конфиг
+    this.config.java_path = javaExecutable;
+    this.saveConfig();
+
+    return {
+      success: true,
+      path: javaExecutable,
+      version: javaInfo.version,
+      message: "Использована скачанная Java",
+    };
+  }
+
   async getYandexDirectLink(shareUrl) {
     console.log(`Исходная ссылка: ${shareUrl}`);
 
@@ -1236,6 +1461,40 @@ app.on("window-all-closed", () => {
 });
 
 // IPC обработчики
+ipcMain.handle("download-java-manually", async (event) => {
+  try {
+    const javaPath = await launcher.downloadJava21();
+
+    // Автоматически устанавливаем скачанную Java как активную
+    launcher.config.java_path = javaPath;
+    launcher.saveConfig();
+
+    return {
+      success: true,
+      path: javaPath,
+      autoSet: true,
+      message: "Java 21 успешно скачана и установлена",
+    };
+  } catch (error) {
+    console.error("Ошибка скачивания Java:", error);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+});
+
+ipcMain.handle("auto-select-downloaded-java", async () => {
+  try {
+    return await launcher.autoSelectDownloadedJava();
+  } catch (error) {
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+});
+
 ipcMain.handle("get-modpacks", () => {
   return launcher.config.modpacks;
 });
