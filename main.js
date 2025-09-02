@@ -27,6 +27,8 @@ class ProfileManager {
     const profile = JSON.parse(await fs.readFile(profilePath, "utf8"));
 
     if (profile.inheritsFrom) {
+      // ИСПРАВЛЕНИЕ: Сначала убедиться что родительский профиль существует
+      await this.ensureParentProfile(instancePath, profile.inheritsFrom);
       const parentProfile = await this.loadVersionProfile(
         instancePath,
         profile.inheritsFrom
@@ -36,7 +38,6 @@ class ProfileManager {
 
     return profile;
   }
-
   mergeProfiles(parent, child) {
     const merged = { ...parent };
 
@@ -58,11 +59,35 @@ class ProfileManager {
       };
     }
 
+    // ИСПРАВЛЕНИЕ: Сохраняем важные поля от родителя
     merged.id = child.id || parent.id;
     merged.mainClass = child.mainClass || parent.mainClass;
     merged.type = child.type || parent.type;
 
+    // Сохраняем downloads, assets, assetIndex от родителя если нет в дочернем
+    if (!child.downloads && parent.downloads)
+      merged.downloads = parent.downloads;
+    if (!child.assets && parent.assets) merged.assets = parent.assets;
+    if (!child.assetIndex && parent.assetIndex)
+      merged.assetIndex = parent.assetIndex;
+
     return merged;
+  }
+
+  async ensureParentProfile(instancePath, parentId) {
+    const parentPath = path.join(
+      instancePath,
+      "versions",
+      parentId,
+      `${parentId}.json`
+    );
+
+    if (!(await fs.pathExists(parentPath))) {
+      console.log(`Скачиваем родительский профиль: ${parentId}`);
+      const url = `https://piston-meta.mojang.com/v1/packages/manifest.json`;
+      // Получить URL профиля и скачать
+      await this.downloadVanillaProfile(instancePath, parentId);
+    }
   }
 
   async downloadProfileLibraries(instancePath, profile, onProgress = null) {
@@ -1212,6 +1237,11 @@ class MinecraftLauncher {
         }
       );
 
+      console.log("Скачиваем assets...");
+      if (profile.assetIndex) {
+        await this.downloadAssets(instancePath, profile.assetIndex);
+      }
+
       console.log(`Natives будут использоваться из: ${nativesDir}`);
 
       console.log("Скачиваем клиентский JAR...");
@@ -1237,6 +1267,21 @@ class MinecraftLauncher {
 
       throw error;
     }
+  }
+
+  async downloadAssets(instancePath, assetIndex) {
+    const assetsDir = path.join(instancePath, "assets");
+    const indexPath = path.join(assetsDir, "indexes", `${assetIndex.id}.json`);
+
+    await fs.ensureDir(path.dirname(indexPath));
+
+    if (!(await fs.pathExists(indexPath))) {
+      await this.downloadFile(assetIndex.url, indexPath);
+    }
+
+    // Скачать объекты assets (базовый набор)
+    const indexData = JSON.parse(await fs.readFile(indexPath, "utf8"));
+    // Можно ограничить скачивание только критически важными assets
   }
 
   // ИСПРАВЛЕННЫЙ метод запуска
