@@ -69,6 +69,22 @@ class ProfileManager {
     const libraries = profile.libraries || [];
     console.log(`Скачиваем ${libraries.length} библиотек из профиля`);
 
+    // Определяем путь к нативам (используем существующую папку от forge)
+    const forgeNativesDir = path.join(
+      instancePath,
+      "versions",
+      profile.id,
+      "natives"
+    );
+    const vanillaNativesDir = path.join(instancePath, "versions", "natives");
+
+    // Проверяем, есть ли уже папка natives от forge
+    const useForgeNatives = await fs.pathExists(forgeNativesDir);
+    const nativesDir = useForgeNatives ? forgeNativesDir : vanillaNativesDir;
+
+    console.log(`Используем natives из: ${nativesDir}`);
+    await fs.ensureDir(nativesDir);
+
     for (let i = 0; i < libraries.length; i++) {
       const lib = libraries[i];
 
@@ -105,10 +121,12 @@ class ProfileManager {
           }
         }
 
-        // Извлекаем нативы если есть
-        if (lib.name.includes("lwjgl") && lib.name.includes("natives")) {
-          const nativesDir = path.join(instancePath, "versions", "natives");
-          await fs.ensureDir(nativesDir); // ИСПРАВЛЕНИЕ: создаем директорию
+        // Извлекаем нативы только если это LWJGL и нет готовой папки forge natives
+        if (
+          lib.name.includes("lwjgl") &&
+          lib.name.includes("natives") &&
+          !useForgeNatives
+        ) {
           await this.launcher.extractNativesToDir(libPath, nativesDir);
         }
       }
@@ -117,6 +135,8 @@ class ProfileManager {
         onProgress(Math.round(((i + 1) / libraries.length) * 100));
       }
     }
+
+    return nativesDir; // Возвращаем путь к используемым natives
   }
 
   checkLibraryRules(library) {
@@ -170,6 +190,40 @@ class ProfileManager {
     }
 
     return clientJar;
+  }
+
+  buildClasspathFromProfile(instancePath, profile) {
+    const classpathEntries = [];
+    const libraries = profile.libraries || [];
+
+    // Добавляем все библиотеки в classpath
+    for (const lib of libraries) {
+      if (!this.checkLibraryRules(lib) || !lib.downloads?.artifact) {
+        continue;
+      }
+
+      const libPath = path.join(
+        instancePath,
+        "libraries",
+        lib.downloads.artifact.path
+      );
+
+      classpathEntries.push(libPath);
+    }
+
+    // Добавляем клиентский JAR
+    const clientJar = path.join(
+      instancePath,
+      "versions",
+      profile.id,
+      `${profile.id}.jar`
+    );
+
+    if (fs.existsSync(clientJar)) {
+      classpathEntries.push(clientJar);
+    }
+
+    return classpathEntries.join(path.delimiter);
   }
 
   buildModulePathFromProfile(instancePath, profile) {
@@ -885,7 +939,7 @@ class MinecraftLauncher {
     return uuid;
   }
 
-  // НОВЫЙ упрощенный метод скачивания модпака
+  // ИСПРАВЛЕННЫЙ метод скачивания модпака
   async downloadModpack(modpack, onProgress) {
     const zipPath = path.join(this.tempDir, `${modpack.id}.zip`);
     const instancePath = path.join(this.instancesDir, modpack.id);
@@ -925,13 +979,15 @@ class MinecraftLauncher {
       );
 
       console.log("Скачиваем библиотеки из профиля...");
-      await this.profileManager.downloadProfileLibraries(
+      const nativesDir = await this.profileManager.downloadProfileLibraries(
         instancePath,
         profile,
         (progress) => {
           if (onProgress) onProgress(progress, "libraries");
         }
       );
+
+      console.log(`Natives будут использоваться из: ${nativesDir}`);
 
       console.log("Скачиваем клиентский JAR...");
       await this.profileManager.ensureClientJar(instancePath, profile);
@@ -947,7 +1003,7 @@ class MinecraftLauncher {
         if (await fs.pathExists(zipPath)) await fs.remove(zipPath);
         if (await fs.pathExists(instancePath)) {
           console.log("Очищаем поврежденную папку модпака...");
-          await fs.emptyDir(instancePath); // ИСПРАВЛЕНИЕ: очищаем содержимое вместо удаления папки
+          await fs.emptyDir(instancePath);
           await fs.remove(instancePath);
         }
       } catch (cleanupError) {
@@ -958,7 +1014,7 @@ class MinecraftLauncher {
     }
   }
 
-  // НОВЫЙ упрощенный метод запуска
+  // ИСПРАВЛЕННЫЙ метод запуска
   async launchMinecraft(username, modpack, customMemoryGB) {
     const instancePath = path.join(this.instancesDir, modpack.id);
     console.log("=== ЗАПУСК ИЗ ПРОФИЛЯ ===");
@@ -984,9 +1040,22 @@ class MinecraftLauncher {
     console.log(`Наследует от: ${profile.inheritsFrom || "нет"}`);
     console.log(`Main class: ${profile.mainClass}`);
 
+    // Определяем правильный путь к natives
+    const forgeNativesDir = path.join(
+      instancePath,
+      "versions",
+      forgeVersionId,
+      "natives"
+    );
+    const vanillaNativesDir = path.join(instancePath, "versions", "natives");
+
+    const useForgeNatives = await fs.pathExists(forgeNativesDir);
+    const nativesDir = useForgeNatives ? forgeNativesDir : vanillaNativesDir;
+
+    console.log(`Используем natives: ${nativesDir}`);
+
     // Подготавливаем переменные
     const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
-    const nativesDir = path.join(instancePath, "versions", "natives");
 
     const variables = {
       library_directory: path.join(instancePath, "libraries"),
@@ -1003,6 +1072,18 @@ class MinecraftLauncher {
       variables
     );
 
+    // Строим classpath
+    const classpath = this.profileManager.buildClasspathFromProfile(
+      instancePath,
+      profile
+    );
+
+    // Строим module path из профиля
+    const modulePath = this.profileManager.buildModulePathFromProfile(
+      instancePath,
+      profile
+    );
+
     // Базовые JVM настройки
     const baseJvmArgs = [
       `-Xmx${memory}`,
@@ -1013,7 +1094,13 @@ class MinecraftLauncher {
       "-XX:G1ReservePercent=20",
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
+      `-Djava.library.path=${nativesDir}`, // Указываем путь к natives
     ];
+
+    // Если есть classpath, добавляем его
+    if (classpath) {
+      baseJvmArgs.push("-cp", classpath);
+    }
 
     // Финальные аргументы
     const finalJvmArgs = [...baseJvmArgs, ...jvmArgs, profile.mainClass];
@@ -1034,6 +1121,8 @@ class MinecraftLauncher {
       "00000000-0000-0000-0000-000000000000",
       "--userType",
       "legacy",
+      "--versionType",
+      "release",
     ];
 
     const allArgs = [...finalJvmArgs, ...finalGameArgs];
@@ -1041,7 +1130,12 @@ class MinecraftLauncher {
     console.log("=== КОМАНДА ЗАПУСКА ===");
     console.log(`Java: ${javaInfo.path}`);
     console.log(`Main Class: ${profile.mainClass}`);
+    console.log(`Natives: ${nativesDir}`);
+    console.log(`Module Path: ${modulePath || "нет"}`);
     console.log(`Args count: ${allArgs.length}`);
+
+    // Выводим первые несколько аргументов для отладки
+    console.log("Первые аргументы:", allArgs.slice(0, 10));
 
     // Запускаем процесс
     const minecraft = spawn(javaInfo.path, allArgs, {
