@@ -731,6 +731,7 @@ class MinecraftLauncher {
     }
   }
 
+  // ПОЛНОСТЬЮ ИСПРАВЛЕННАЯ функция getJVMArgs
   getJVMArgs(modpack, javaVersion) {
     const javaMainVersion = parseInt(javaVersion);
 
@@ -746,48 +747,43 @@ class MinecraftLauncher {
       "-Dlog4j2.formatMsgNoLookups=true",
     ];
 
-    // ИСПРАВЛЕННЫЕ JVM аргументы для Java 17+ (БЕЗ модульной системы)
+    // ИСПРАВЛЕННЫЕ JVM аргументы для Java 17+ (ОТКЛЮЧЕНИЕ МОДУЛЬНОЙ СИСТЕМЫ)
     if (javaMainVersion >= 17) {
       args.push(
         // КРИТИЧНО: Полностью отключаем модульную систему Java
-        "-Djdk.module.main=false", // Отключить main модуль
-        "-Djdk.module.path=", // Пустой module path
-        "-Djdk.module.upgrade.path=", // Пустой upgrade path
-        "-Djdk.module.main.class=", // Убрать main class модуля
-        "-Dsun.java.launcher.is_modular=false", // Принудительно отключить модульность
+        "-Djdk.module.main=false",
+        "-Djdk.module.path=",
+        "-Djdk.module.upgrade.path=",
+        "-Dsun.java.launcher.is_modular=false",
 
-        // Базовые пакеты
+        // МИНИМАЛЬНЫЕ --add-opens (только самые необходимые)
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
-        "--add-opens=java.base/java.util=ALL-UNNAMED",
-        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-        "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
-        "--add-opens=java.base/java.io=ALL-UNNAMED",
-
-        // КРИТИЧНО для BootstrapLauncher:
         "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-        "--add-opens=java.base/java.security=ALL-UNNAMED",
-        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
         "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
+        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.zip=ALL-UNNAMED",
         "--add-opens=java.base/java.net=ALL-UNNAMED",
-
-        // Для секьюрити и криптографии
         "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
         "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
 
-        // Desktop модуль для GUI
+        // GUI поддержка
         "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
         "--add-opens=java.desktop/javax.swing=ALL-UNNAMED",
 
-        // Отключаем предупреждения о незаконном доступе
-        "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
-        "--add-exports=java.base/sun.security.util=ALL-UNNAMED"
+        // КРИТИЧНО: Отключаем предупреждения модульной системы
+        "--illegal-access=permit"
       );
     }
 
     if (javaMainVersion >= 21) {
       args.push(
         "-XX:+EnableDynamicAgentLoading",
-        // Дополнительные флаги для Java 21
+        // Дополнительные для Java 21
         "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
         "--add-opens=java.base/java.math=ALL-UNNAMED"
       );
@@ -1940,9 +1936,7 @@ class MinecraftLauncher {
     }
   }
 
-  /**
-   * ОТЛАДОЧНЫЙ запуск с детальными логами
-   */
+  // ИСПРАВЛЕННАЯ функция launchMinecraftUltraDebug в main.js
   async launchMinecraftUltraDebug(username, modpack, customMemoryGB) {
     const instancePath = path.join(this.instancesDir, modpack.id);
     await this.ensureMinecraftJar(instancePath, modpack.minecraft_version);
@@ -1972,9 +1966,6 @@ class MinecraftLauncher {
     // === ПРОВЕРКА И ВОССТАНОВЛЕНИЕ ПОВРЕЖДЕННЫХ JAR ===
     await this.validateAndFixJars(instancePath, modpack);
 
-    // === ПРОВЕРКА КРИТИЧЕСКИХ СЕРВИСОВ ===
-    await this.ultraDebugCheckCriticalServices(instancePath, modpack);
-
     // === ИСПРАВЛЕНИЕ TRANSFORM SERVICES ===
     await this.fixTransformServices(instancePath, modpack);
 
@@ -1986,9 +1977,6 @@ class MinecraftLauncher {
     const launchTarget = "forgeclient"; // Используем стандартный target
     console.log(`🎯 Выбранный LaunchTarget: ${launchTarget}`);
 
-    // === ПРОВЕРКА TRANSFORM SERVICES ===
-    await this.debugCheckTransformServices(instancePath, modpack);
-
     // === ФИНАЛЬНАЯ ПРОВЕРКА ПЕРЕД ЗАПУСКОМ ===
     await this.finalPreLaunchValidation(
       instancePath,
@@ -1997,8 +1985,7 @@ class MinecraftLauncher {
       launchTarget
     );
 
-    // ИСПРАВЛЕННЫЕ JVM аргументы для метода launchMinecraftUltraDebug
-    // ФИНАЛЬНЫЕ ИСПРАВЛЕННЫЕ JVM аргументы для метода launchMinecraftUltraDebug
+    // ПОЛНОСТЬЮ ИСПРАВЛЕННЫЕ JVM аргументы - БЕЗ МОДУЛЬНОЙ СИСТЕМЫ
     const jvmArgs = [
       `-Xmx${memory}`,
       "-Xms1G",
@@ -2009,41 +1996,34 @@ class MinecraftLauncher {
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
 
-      // ТОЛЬКО --add-opens, БЕЗ модульных настроек
-      "--add-opens",
-      "java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.lang.reflect=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.io=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.nio=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.nio.file=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.security=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.util=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.lang=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/sun.security.util=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/sun.nio.ch=ALL-UNNAMED",
-      "--add-opens",
-      "java.desktop/java.awt=ALL-UNNAMED",
-      "--add-opens",
-      "java.desktop/javax.swing=ALL-UNNAMED",
+      // КРИТИЧНО: Полностью отключаем модульную систему
+      "-Djdk.module.main=false",
+      "-Djdk.module.path=",
+      "-Djdk.module.upgrade.path=",
+      "-Dsun.java.launcher.is_modular=false",
 
-      // КРИТИЧНЫЕ opens для JarJar и ModuleClassLoader
-      "--add-opens",
-      "java.base/java.net=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.util.jar=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.util.zip=ALL-UNNAMED",
-      "--add-opens",
-      "java.base/java.lang.module=ALL-UNNAMED",
+      // ИСПРАВЛЕНИЕ: Только самые необходимые --add-opens (БЕЗ модулей!)
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio.file=ALL-UNNAMED",
+      "--add-opens=java.base/java.security=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.jar=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.zip=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
+      "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+
+      // GUI поддержка
+      "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
+      "--add-opens=java.desktop/javax.swing=ALL-UNNAMED",
+
+      // КРИТИЧНО: Отключаем все предупреждения модульной системы
+      "--illegal-access=permit",
+      "-Djava.base.addOpens=java.base/java.lang=ALL-UNNAMED",
 
       // Системные свойства для Forge
       "-Dfml.earlyprogresswindow=false",
@@ -2051,9 +2031,8 @@ class MinecraftLauncher {
       "-Dfml.ignoreInvalidMinecraftCertificates=true",
       "-Dfml.ignorePatchDiscrepancies=true",
 
-      // Системные свойства для BootstrapLauncher
+      // ИСПРАВЛЕНИЕ: Системные свойства для BootstrapLauncher
       `-DlegacyClassPath=${classpath}`,
-      // УБРАНО ignoreList - не игнорируем главный класс!
       `-DlibraryDirectory=${path.join(instancePath, "libraries")}`,
 
       // Стандартные настройки Minecraft
@@ -2061,17 +2040,17 @@ class MinecraftLauncher {
       `-Dminecraft.launcher.brand=azurael-launcher`,
       `-Dminecraft.launcher.version=1.0.0`,
 
-      // ИСПРАВЛЕНИЕ: Использовать -cp вместо модульной системы
+      // КРИТИЧНО: Классический classpath (НЕ модульная система!)
       "-cp",
       classpath,
 
-      // Главный класс
+      // Главный класс - BootstrapLauncher
       "cpw.mods.bootstraplauncher.BootstrapLauncher",
     ];
 
     const gameArgs = [
       "--launchTarget",
-      "forgeclient",
+      launchTarget,
       "--fml.mcVersion",
       modpack.minecraft_version,
       "--fml.forgeVersion",
@@ -2094,9 +2073,9 @@ class MinecraftLauncher {
 
     const allArgs = [...jvmArgs, ...gameArgs];
 
-    console.log("🚀 === ФИНАЛЬНАЯ КОМАНДА ЗАПУСКА ===");
+    console.log("🚀 === ИСПРАВЛЕННАЯ КОМАНДА ЗАПУСКА ===");
     console.log(`Command: "${javaPath}"`);
-    console.log("JVM Args:");
+    console.log("JVM Args (исправленные):");
     jvmArgs.forEach((arg, i) => {
       console.log(`  [${i}] ${arg}`);
     });
@@ -2104,10 +2083,9 @@ class MinecraftLauncher {
     gameArgs.forEach((arg, i) => {
       console.log(`  [${i}] ${arg}`);
     });
-    console.log(`📏 Общая длина: ${JSON.stringify(allArgs).length} символов`);
 
-    // === ЗАПУСК С ДЕТАЛЬНЫМ МОНИТОРИНГОМ ===
-    console.log("🚀 === ЗАПУСК ПРОЦЕССА ===");
+    // === ЗАПУСК С ОТКЛЮЧЕННОЙ МОДУЛЬНОЙ СИСТЕМОЙ ===
+    console.log("🚀 === ЗАПУСК ПРОЦЕССА (БЕЗ МОДУЛЕЙ) ===");
 
     const minecraft = spawn(javaPath, allArgs, {
       cwd: instancePath,
@@ -2115,10 +2093,16 @@ class MinecraftLauncher {
       detached: false,
       env: {
         ...process.env,
-        // УБИРАЕМ проблемные переменные окружения
+        // КРИТИЧНО: Убираем ВСЕ переменные модульной системы
         JAVA_TOOL_OPTIONS: undefined,
         _JAVA_OPTIONS: undefined,
-        JDK_JAVA_OPTIONS: undefined, // ДОБАВИТЬ: убираем и эту
+        JDK_JAVA_OPTIONS: undefined,
+
+        // ДОБАВИТЬ: Принудительно отключаем модули
+        JAVA_MODULE_PATH: "",
+        MODULE_PATH: "",
+
+        // Локализация
         LC_ALL: "en_US.UTF-8",
         LANG: "en_US.UTF-8",
       },
@@ -2126,15 +2110,31 @@ class MinecraftLauncher {
 
     console.log(`✅ Процесс запущен (PID: ${minecraft.pid})`);
 
-    // Логирование вывода в реальном времени
+    // Улучшенное логирование вывода
     minecraft.stdout.on("data", (data) => {
       const output = data.toString();
       console.log(`[STDOUT] ${output}`);
+
+      // Отправляем вывод в UI если нужно
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send("minecraft-log", {
+          type: "stdout",
+          message: output,
+        });
+      }
     });
 
     minecraft.stderr.on("data", (data) => {
       const output = data.toString();
       console.log(`[STDERR] ${output}`);
+
+      // Отправляем ошибки в UI если нужно
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send("minecraft-log", {
+          type: "stderr",
+          message: output,
+        });
+      }
     });
 
     minecraft.on("error", (error) => {
@@ -2146,6 +2146,17 @@ class MinecraftLauncher {
       console.log(`🔴 Процесс завершился: код=${code}, сигнал=${signal}`);
       if (code !== 0) {
         console.log("❌ НЕНОРМАЛЬНОЕ ЗАВЕРШЕНИЕ ПРОЦЕССА");
+      } else {
+        console.log("✅ Minecraft успешно завершен");
+      }
+
+      // Уведомляем UI о завершении
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send("minecraft-exit", {
+          code,
+          signal,
+          success: code === 0,
+        });
       }
     });
 

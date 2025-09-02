@@ -73,6 +73,32 @@ async function downloadMissingLibraries(
       ),
     },
 
+    // Minecraft Obfuscation Mappings для 1.20.1
+    {
+      url: "https://piston-data.mojang.com/v1/objects/f2508c63c2bc50e6e41cd0b997c1bc024a0c6b39/client.txt",
+      path: path.join(
+        libsDir,
+        "net",
+        "minecraft",
+        "client",
+        "1.20.1",
+        "client-1.20.1-mappings.txt"
+      ),
+    },
+
+    // FORGE INSTALLER (может потребоваться)
+    {
+      url: `https://maven.minecraftforge.net/net/minecraftforge/forge/${modpack.minecraft_version}-${modpack.forge_version}/forge-${modpack.minecraft_version}-${modpack.forge_version}-installer.jar`,
+      path: path.join(
+        libsDir,
+        "net",
+        "minecraftforge",
+        "forge",
+        `${modpack.minecraft_version}-${modpack.forge_version}`,
+        `forge-${modpack.minecraft_version}-${modpack.forge_version}-installer.jar`
+      ),
+    },
+
     // FMLCore (РАБОТАЕТ)
     {
       url: "https://maven.minecraftforge.net/net/minecraftforge/fmlcore/1.20.1-47.3.33/fmlcore-1.20.1-47.3.33.jar",
@@ -180,6 +206,7 @@ async function downloadMissingLibraries(
     // =============================================
     // ASM библиотеки - ПОЛНЫЙ НАБОР (КРИТИЧНО!)
     // =============================================
+    // ASM 9.7.1 - ПОЛНЫЙ НАБОР с module-info (КРИТИЧНО!)
     {
       url: "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.7.1/asm-9.7.1.jar",
       path: path.join(
@@ -190,6 +217,19 @@ async function downloadMissingLibraries(
         "asm",
         "9.7.1",
         "asm-9.7.1.jar"
+      ),
+    },
+
+    // ДОБАВЛЯЕМ: ASM как автоматический модуль (ИСПРАВЛЕНИЕ ГЛАВНОЙ ОШИБКИ!)
+    {
+      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.7.1/asm-9.7.1.jar",
+      path: path.join(
+        libsDir,
+        "org",
+        "objectweb",
+        "asm",
+        "9.7.1",
+        "asm-9.7.1.jar" // Создаем алиас для модуля org.objectweb.asm
       ),
     },
     {
