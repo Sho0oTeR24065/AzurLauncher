@@ -110,6 +110,17 @@ class ProfileManager {
     console.log(`Используем natives из: ${nativesDir}`);
     await fs.ensureDir(nativesDir);
 
+    const criticalLibraries = [
+      "bootstraplauncher",
+      "securejarhandler",
+      "modlauncher",
+      "fmlloader",
+      "fmlearlydisplay",
+      "JarJarFileSystems",
+      "JarJarMetadata",
+      "JarJarSelector",
+    ];
+
     for (let i = 0; i < libraries.length; i++) {
       const lib = libraries[i];
 
@@ -136,14 +147,26 @@ class ProfileManager {
             );
             console.log(`Скачано: ${path.basename(libPath)}`);
           } catch (error) {
-            console.log(`Ошибка: ${error.message}`);
-            if (
-              lib.name.includes("modlauncher") ||
-              lib.name.includes("fmlloader")
-            ) {
-              throw error;
+            console.log(
+              `Ошибка скачивания ${path.basename(libPath)}: ${error.message}`
+            );
+
+            // ИСПРАВЛЕНИЕ: Для критических библиотек прерываем процесс
+            const isCritical = criticalLibraries.some((critical) =>
+              lib.name.toLowerCase().includes(critical.toLowerCase())
+            );
+
+            if (isCritical) {
+              console.error(`Критическая библиотека не скачана: ${lib.name}`);
+              throw new Error(
+                `Не удалось скачать критическую библиотеку: ${path.basename(
+                  libPath
+                )}`
+              );
             }
           }
+        } else {
+          console.log(`Уже существует: ${path.basename(libPath)}`);
         }
 
         // Извлекаем нативы только если это LWJGL и нет готовой папки forge natives
@@ -152,13 +175,48 @@ class ProfileManager {
           lib.name.includes("natives") &&
           !useForgeNatives
         ) {
-          await this.launcher.extractNativesToDir(libPath, nativesDir);
+          try {
+            await this.launcher.extractNativesToDir(libPath, nativesDir);
+          } catch (error) {
+            console.log(
+              `Ошибка извлечения нативов из ${path.basename(libPath)}: ${
+                error.message
+              }`
+            );
+          }
         }
       }
 
       if (onProgress) {
         onProgress(Math.round(((i + 1) / libraries.length) * 100));
       }
+    }
+
+    // ИСПРАВЛЕНИЕ: Проверяем что все критические библиотеки скачаны
+    const missingCritical = [];
+    for (const lib of libraries) {
+      if (!lib.downloads?.artifact || !this.checkLibraryRules(lib)) continue;
+
+      const isCritical = criticalLibraries.some((critical) =>
+        lib.name.toLowerCase().includes(critical.toLowerCase())
+      );
+
+      if (isCritical) {
+        const libPath = path.join(
+          instancePath,
+          "libraries",
+          lib.downloads.artifact.path
+        );
+        if (!(await fs.pathExists(libPath))) {
+          missingCritical.push(lib.name);
+        }
+      }
+    }
+
+    if (missingCritical.length > 0) {
+      throw new Error(
+        `Отсутствуют критические библиотеки: ${missingCritical.join(", ")}`
+      );
     }
 
     return nativesDir; // Возвращаем путь к используемым natives
@@ -217,50 +275,59 @@ class ProfileManager {
     return clientJar;
   }
 
-  buildClasspathFromProfile(instancePath, profile) {
-    const classpathEntries = [];
-    const libraries = profile.libraries || [];
-
-    // Добавляем все библиотеки в classpath
-    for (const lib of libraries) {
-      if (!this.checkLibraryRules(lib) || !lib.downloads?.artifact) {
-        continue;
-      }
-
-      const libPath = path.join(
-        instancePath,
-        "libraries",
-        lib.downloads.artifact.path
-      );
-
-      classpathEntries.push(libPath);
-    }
-
-    // Добавляем клиентский JAR
-    const clientJar = path.join(
-      instancePath,
-      "versions",
-      profile.id,
-      `${profile.id}.jar`
-    );
-
-    if (fs.existsSync(clientJar)) {
-      classpathEntries.push(clientJar);
-    }
-
-    return classpathEntries.join(path.delimiter);
-  }
-
   buildModulePathFromProfile(instancePath, profile) {
     const jvmArgs = profile.arguments?.jvm || [];
 
-    const modulePathIndex = jvmArgs.findIndex((arg) => arg === "-p");
+    // Ищем -p или --module-path
+    let modulePathIndex = jvmArgs.findIndex((arg) => arg === "-p");
+    if (modulePathIndex === -1) {
+      modulePathIndex = jvmArgs.findIndex((arg) => arg === "--module-path");
+    }
+
     if (modulePathIndex === -1 || !jvmArgs[modulePathIndex + 1]) {
-      return null;
+      console.log("Module path не найден в профиле, собираем вручную");
+
+      // ИСПРАВЛЕНИЕ: Собираем module path из необходимых библиотек
+      const moduleLibraries = [
+        "bootstraplauncher",
+        "securejarhandler",
+        "asm-commons",
+        "asm-util",
+        "asm-analysis",
+        "asm-tree",
+        "asm",
+        "JarJarFileSystems",
+      ];
+
+      const modulePaths = [];
+      const libraries = profile.libraries || [];
+
+      for (const lib of libraries) {
+        if (!this.checkLibraryRules(lib) || !lib.downloads?.artifact) continue;
+
+        const libName = lib.name;
+        const shouldInclude = moduleLibraries.some((modLib) =>
+          libName.includes(modLib)
+        );
+
+        if (shouldInclude) {
+          const libPath = path.join(
+            instancePath,
+            "libraries",
+            lib.downloads.artifact.path
+          );
+          if (fs.existsSync(libPath)) {
+            modulePaths.push(libPath);
+          }
+        }
+      }
+
+      return modulePaths.join(path.delimiter);
     }
 
     let modulePath = jvmArgs[modulePathIndex + 1];
 
+    // Заменяем переменные
     modulePath = modulePath.replace(
       /\$\{library_directory\}/g,
       path.join(instancePath, "libraries")
@@ -274,27 +341,101 @@ class ProfileManager {
     return modulePath;
   }
 
-  processProfileArguments(profile, variables = {}) {
+  processForgeArguments(profile, variables = {}) {
     const jvmArgs = [];
     const gameArgs = [];
 
+    // Обрабатываем JVM аргументы из профиля
     const profileJvmArgs = profile.arguments?.jvm || [];
     for (const arg of profileJvmArgs) {
       if (typeof arg === "string") {
-        jvmArgs.push(this.replaceVariables(arg, variables));
+        let processedArg = this.replaceVariables(arg, variables);
+
+        // Пропускаем некоторые аргументы которые мы обрабатываем отдельно
+        if (
+          !processedArg.startsWith("-p") &&
+          !processedArg.startsWith("--module-path") &&
+          !processedArg.startsWith("-cp") &&
+          !processedArg.startsWith("-classpath")
+        ) {
+          jvmArgs.push(processedArg);
+        }
+      } else if (typeof arg === "object" && arg.rules) {
+        // Обработка условных аргументов
+        if (this.checkArgumentRules(arg.rules)) {
+          if (Array.isArray(arg.value)) {
+            for (const value of arg.value) {
+              let processedArg = this.replaceVariables(value, variables);
+              if (
+                !processedArg.startsWith("-p") &&
+                !processedArg.startsWith("--module-path") &&
+                !processedArg.startsWith("-cp") &&
+                !processedArg.startsWith("-classpath")
+              ) {
+                jvmArgs.push(processedArg);
+              }
+            }
+          } else {
+            let processedArg = this.replaceVariables(arg.value, variables);
+            if (
+              !processedArg.startsWith("-p") &&
+              !processedArg.startsWith("--module-path") &&
+              !processedArg.startsWith("-cp") &&
+              !processedArg.startsWith("-classpath")
+            ) {
+              jvmArgs.push(processedArg);
+            }
+          }
+        }
       }
     }
 
+    // Обрабатываем game аргументы
     const profileGameArgs = profile.arguments?.game || [];
     for (const arg of profileGameArgs) {
       if (typeof arg === "string") {
         gameArgs.push(this.replaceVariables(arg, variables));
+      } else if (typeof arg === "object" && arg.rules) {
+        if (this.checkArgumentRules(arg.rules)) {
+          if (Array.isArray(arg.value)) {
+            gameArgs.push(
+              ...arg.value.map((v) => this.replaceVariables(v, variables))
+            );
+          } else {
+            gameArgs.push(this.replaceVariables(arg.value, variables));
+          }
+        }
       }
     }
 
     return { jvmArgs, gameArgs };
   }
 
+  checkArgumentRules(rules) {
+    const platform = require("os").platform();
+    const platformMap = {
+      win32: "windows",
+      darwin: "osx",
+      linux: "linux",
+    };
+
+    for (const rule of rules) {
+      if (rule.os && rule.os.name) {
+        const rulePlatform = rule.os.name;
+        const currentPlatform = platformMap[platform];
+
+        if (rule.action === "allow") {
+          return rulePlatform === currentPlatform;
+        } else if (rule.action === "disallow") {
+          if (rulePlatform === currentPlatform) {
+            return false;
+          }
+        }
+      }
+    }
+
+    return true;
+  }
   replaceVariables(arg, variables) {
     let result = arg;
 
@@ -1284,7 +1425,6 @@ class MinecraftLauncher {
     // Можно ограничить скачивание только критически важными assets
   }
 
-  // ИСПРАВЛЕННЫЙ метод запуска
   async launchMinecraft(username, modpack, customMemoryGB) {
     const instancePath = path.join(this.instancesDir, modpack.id);
     console.log("=== ЗАПУСК ИЗ ПРОФИЛЯ ===");
@@ -1307,84 +1447,66 @@ class MinecraftLauncher {
     );
 
     console.log(`Загружен профиль: ${profile.id}`);
-    console.log(`Наследует от: ${profile.inheritsFrom || "нет"}`);
     console.log(`Main class: ${profile.mainClass}`);
 
-    // Определяем правильный путь к natives
-    const forgeNativesDir = path.join(
+    // Определяем путь к natives
+    const nativesDir = path.join(
       instancePath,
       "versions",
       forgeVersionId,
       "natives"
     );
-    const vanillaNativesDir = path.join(instancePath, "versions", "natives");
-
-    const useForgeNatives = await fs.pathExists(forgeNativesDir);
-    const nativesDir = useForgeNatives ? forgeNativesDir : vanillaNativesDir;
-
-    console.log(`Используем natives: ${nativesDir}`);
 
     // Подготавливаем переменные
     const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
 
-    const variables = {
-      library_directory: path.join(instancePath, "libraries"),
-      classpath_separator: path.delimiter,
-      version_name: forgeVersionId,
-      natives_directory: nativesDir,
-      launcher_name: "azurael-launcher",
-      launcher_version: "1.0.0",
-    };
-
-    // Получаем аргументы из профиля
-    const { jvmArgs, gameArgs } = this.profileManager.processProfileArguments(
-      profile,
-      variables
-    );
-
-    // Строим classpath
-    const classpath = this.profileManager.buildClasspathFromProfile(
-      instancePath,
-      profile
-    );
-
-    // Строим module path из профиля
+    // Строим Module Path
     const modulePath = this.profileManager.buildModulePathFromProfile(
       instancePath,
       profile
     );
 
-    // Базовые JVM настройки
-    const baseJvmArgs = [
+    // Строим Classpath (НЕ включаем модульные библиотеки)
+    const classpath = this.buildNonModularClasspath(instancePath, profile);
+
+    // ИСПРАВЛЕНИЕ: Правильные системные свойства для BootstrapLauncher
+    const systemProperties = [
       `-Xmx${memory}`,
-      "-Xms1G",
+      `-Xms1G`,
       "-XX:+UseG1GC",
       "-XX:+UnlockExperimentalVMOptions",
       "-XX:G1NewSizePercent=20",
       "-XX:G1ReservePercent=20",
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
-      `-Djava.library.path=${nativesDir}`, // Указываем путь к natives
+      `-Djava.library.path=${nativesDir}`,
+      `-Djna.tmpdir=${nativesDir}`,
+      `-Dnet.minecraftforge.gradle.GradleStart.srg.srg-mcp=${path.join(
+        instancePath,
+        "config"
+      )}`,
+      `-Dforge.logging.markers=REGISTRIES`,
+      `-Dforge.logging.console.level=debug`,
+      `-Djava.net.preferIPv6Addresses=system`,
+      `-DignoreList=bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems`,
+      `-DlibraryDirectory=${path.join(instancePath, "libraries")}`,
+      `-DlegacyClassPath=${classpath}`,
+      `-p`,
+      modulePath,
     ];
 
-    // Если есть classpath, добавляем его
-    if (classpath) {
-      baseJvmArgs.push("-cp", classpath);
-    }
-
-    // Финальные аргументы
-    const finalJvmArgs = [...baseJvmArgs, ...jvmArgs, profile.mainClass];
-
-    const finalGameArgs = [
-      ...gameArgs,
+    // Game аргументы для BootstrapLauncher
+    const gameArgs = [
+      "--username",
+      username,
+      "--version",
+      forgeVersionId,
       "--gameDir",
       instancePath,
       "--assetsDir",
       path.join(instancePath, "assets"),
       "--assetIndex",
       modpack.minecraft_version,
-      "--username",
-      username,
       "--uuid",
       this.generateOfflineUUID(username),
       "--accessToken",
@@ -1393,53 +1515,88 @@ class MinecraftLauncher {
       "legacy",
       "--versionType",
       "release",
+      "--width",
+      "854",
+      "--height",
+      "480",
     ];
 
-    const allArgs = [...finalJvmArgs, ...finalGameArgs];
+    // ИСПРАВЛЕНИЕ: Финальная команда в правильном порядке
+    const allArgs = [...systemProperties, profile.mainClass, ...gameArgs];
 
     console.log("=== КОМАНДА ЗАПУСКА ===");
     console.log(`Java: ${javaInfo.path}`);
     console.log(`Main Class: ${profile.mainClass}`);
     console.log(`Natives: ${nativesDir}`);
-    console.log(`Module Path: ${modulePath || "нет"}`);
+    console.log(`Module Path: да`);
     console.log(`Args count: ${allArgs.length}`);
 
-    // Выводим первые несколько аргументов для отладки
-    console.log("Первые аргументы:", allArgs.slice(0, 10));
+    // Создаем дополнительные переменные окружения
+    const env = {
+      ...process.env,
+      // Очищаем конфликтующие переменные Java
+      JAVA_TOOL_OPTIONS: undefined,
+      _JAVA_OPTIONS: undefined,
+      JDK_JAVA_OPTIONS: undefined,
+
+      // Устанавливаем кодировку
+      LC_ALL: "en_US.UTF-8",
+      LANG: "en_US.UTF-8",
+
+      // Forge специфичные переменные
+      FORGE_FORCE_FRAME_RECALC: "true",
+
+      // Переменные для BootstrapLauncher
+      BOOTSTRAP_LAUNCH_TARGET: "cpw.mods.modlauncher.Launcher",
+
+      // Путь к библиотекам
+      LIBRARY_DIRECTORY: path.join(instancePath, "libraries"),
+
+      // Версия
+      MC_VERSION: modpack.minecraft_version,
+      FORGE_VERSION: modpack.forge_version,
+
+      // Assets
+      ASSETS_ROOT: path.join(instancePath, "assets"),
+      ASSETS_INDEX_NAME: modpack.minecraft_version,
+
+      // Game directory
+      GAME_DIRECTORY: instancePath,
+    };
+
+    console.log("Запускаем процесс...");
 
     // Запускаем процесс
     const minecraft = spawn(javaInfo.path, allArgs, {
       cwd: instancePath,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        JAVA_TOOL_OPTIONS: undefined,
-        _JAVA_OPTIONS: undefined,
-        JDK_JAVA_OPTIONS: undefined,
-        LC_ALL: "en_US.UTF-8",
-        LANG: "en_US.UTF-8",
-      },
+      env: env,
+      detached: false,
     });
 
     console.log(`Процесс запущен (PID: ${minecraft.pid})`);
 
     // Обработка вывода
     minecraft.stdout.on("data", (data) => {
-      console.log(`[STDOUT] ${data.toString()}`);
+      const output = data.toString();
+      console.log(`[STDOUT] ${output}`);
+
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.webContents.send("minecraft-log", {
           type: "stdout",
-          message: data.toString(),
+          message: output,
         });
       }
     });
 
     minecraft.stderr.on("data", (data) => {
-      console.log(`[STDERR] ${data.toString()}`);
+      const output = data.toString();
+      console.log(`[STDERR] ${output}`);
+
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.webContents.send("minecraft-log", {
           type: "stderr",
-          message: data.toString(),
+          message: output,
         });
       }
     });
@@ -1461,6 +1618,62 @@ class MinecraftLauncher {
     });
 
     return minecraft;
+  }
+
+  // Метод для построения classpath БЕЗ модульных библиотек
+  buildNonModularClasspath(instancePath, profile) {
+    const classpathEntries = [];
+    const libraries = profile.libraries || [];
+
+    // Библиотеки которые НЕ должны быть в classpath (они в module path)
+    const moduleLibraries = [
+      "bootstraplauncher",
+      "securejarhandler",
+      "asm-commons",
+      "asm-util",
+      "asm-analysis",
+      "asm-tree",
+      "asm",
+      "JarJarFileSystems",
+    ];
+
+    // Добавляем все библиотеки кроме модульных
+    for (const lib of libraries) {
+      if (
+        !this.profileManager.checkLibraryRules(lib) ||
+        !lib.downloads?.artifact
+      ) {
+        continue;
+      }
+
+      const libName = lib.name;
+      const isModular = moduleLibraries.some((modLib) =>
+        libName.includes(modLib)
+      );
+
+      if (!isModular) {
+        const libPath = path.join(
+          instancePath,
+          "libraries",
+          lib.downloads.artifact.path
+        );
+        classpathEntries.push(libPath);
+      }
+    }
+
+    // Добавляем клиентский JAR
+    const clientJar = path.join(
+      instancePath,
+      "versions",
+      profile.id,
+      `${profile.id}.jar`
+    );
+
+    if (fs.existsSync(clientJar)) {
+      classpathEntries.push(clientJar);
+    }
+
+    return classpathEntries.join(path.delimiter);
   }
 
   async checkModpackInstalled(modpackId) {
