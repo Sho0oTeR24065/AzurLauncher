@@ -118,7 +118,11 @@ class MinecraftLauncher {
           encoding: "utf8",
           env: {
             ...process.env,
-            JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8",
+            // УБИРАЕМ проблемные переменные окружения
+            JAVA_TOOL_OPTIONS: undefined,
+            _JAVA_OPTIONS: undefined,
+            JDK_JAVA_OPTIONS: undefined, // ДОБАВИТЬ: убираем и эту
+            LC_ALL: "en_US.UTF-8",
             LANG: "en_US.UTF-8",
           },
         },
@@ -1993,7 +1997,8 @@ class MinecraftLauncher {
       launchTarget
     );
 
-    // НОВЫЕ аргументы (ДОБАВИТЬ):
+    // ИСПРАВЛЕННЫЕ JVM аргументы для метода launchMinecraftUltraDebug
+    // ФИНАЛЬНЫЕ ИСПРАВЛЕННЫЕ JVM аргументы для метода launchMinecraftUltraDebug
     const jvmArgs = [
       `-Xmx${memory}`,
       "-Xms1G",
@@ -2004,7 +2009,7 @@ class MinecraftLauncher {
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
 
-      // КРИТИЧНО: Только --add-opens без модульной системы
+      // ТОЛЬКО --add-opens, БЕЗ модульных настроек
       "--add-opens",
       "java.base/java.lang.invoke=ALL-UNNAMED",
       "--add-opens",
@@ -2030,19 +2035,33 @@ class MinecraftLauncher {
       "--add-opens",
       "java.desktop/javax.swing=ALL-UNNAMED",
 
+      // КРИТИЧНЫЕ opens для JarJar и ModuleClassLoader
+      "--add-opens",
+      "java.base/java.net=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.util.jar=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.util.zip=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.lang.module=ALL-UNNAMED",
+
       // Системные свойства для Forge
+      "-Dfml.earlyprogresswindow=false",
+      "-Dlog4j2.formatMsgNoLookups=true",
+      "-Dfml.ignoreInvalidMinecraftCertificates=true",
+      "-Dfml.ignorePatchDiscrepancies=true",
+
+      // Системные свойства для BootstrapLauncher
       `-DlegacyClassPath=${classpath}`,
-      `-DignoreList=bootstraplauncher-1.1.2.jar`,
+      // УБРАНО ignoreList - не игнорируем главный класс!
       `-DlibraryDirectory=${path.join(instancePath, "libraries")}`,
 
       // Стандартные настройки Minecraft
-      "-Dfml.earlyprogresswindow=false",
-      "-Dlog4j2.formatMsgNoLookups=true",
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
       `-Dminecraft.launcher.brand=azurael-launcher`,
       `-Dminecraft.launcher.version=1.0.0`,
 
-      // ИСПРАВЛЕНИЕ: Используем -cp вместо -p для classpath
+      // ИСПРАВЛЕНИЕ: Использовать -cp вместо модульной системы
       "-cp",
       classpath,
 
@@ -2099,6 +2118,7 @@ class MinecraftLauncher {
         // УБИРАЕМ проблемные переменные окружения
         JAVA_TOOL_OPTIONS: undefined,
         _JAVA_OPTIONS: undefined,
+        JDK_JAVA_OPTIONS: undefined, // ДОБАВИТЬ: убираем и эту
         LC_ALL: "en_US.UTF-8",
         LANG: "en_US.UTF-8",
       },
@@ -2400,9 +2420,7 @@ class MinecraftLauncher {
     return count;
   }
 
-  /**
-   * ОТЛАДОЧНЫЙ classpath с логами
-   */
+  // ИСПРАВЛЕННАЯ функция buildDebugClasspath в main.js
   async buildDebugClasspath(instancePath, modpack) {
     console.log("🔍 === СОЗДАНИЕ ИСПРАВЛЕННОГО CLASSPATH ===");
 
@@ -2423,22 +2441,34 @@ class MinecraftLauncher {
       console.log("✅ BootstrapLauncher добавлен");
     }
 
-    // 2. Критические Forge библиотеки в ПРАВИЛЬНОМ порядке
-    const coreForgeLibs = [
-      "cpw/mods/modlauncher/10.0.9/modlauncher-10.0.9.jar",
-      "cpw/mods/securejarhandler/2.1.10/securejarhandler-2.1.10.jar",
-
-      // ASM библиотеки - ВСЕ ОБЯЗАТЕЛЬНЫ В ПРАВИЛЬНОМ ПОРЯДКЕ
-      "org/ow2/asm/asm/9.5/asm-9.5.jar",
-      "org/ow2/asm/asm-commons/9.5/asm-commons-9.5.jar",
-      "org/ow2/asm/asm-tree/9.5/asm-tree-9.5.jar", // ВАЖНО: tree после commons
-      "org/ow2/asm/asm-util/9.5/asm-util-9.5.jar",
-      "org/ow2/asm/asm-analysis/9.5/asm-analysis-9.5.jar",
-
-      // JarJar компоненты
+    // 2. КРИТИЧЕСКИЕ JarJar компоненты ПЕРЕД ModLauncher (ВАЖНО!)
+    const jarJarLibs = [
+      "net/minecraftforge/JarJarFileSystems/0.3.19/JarJarFileSystems-0.3.19.jar",
       "net/minecraftforge/JarJarSelector/0.3.19/JarJarSelector-0.3.19.jar",
       "net/minecraftforge/JarJarMetadata/0.3.19/JarJarMetadata-0.3.19.jar",
-      "net/minecraftforge/JarJarFileSystems/0.3.19/JarJarFileSystems-0.3.19.jar",
+    ];
+
+    for (const lib of jarJarLibs) {
+      const fullPath = path.join(libsDir, lib);
+      if (await fs.pathExists(fullPath)) {
+        classpath.push(fullPath);
+        console.log(`✅ JarJar: ${path.basename(lib)}`);
+      } else {
+        console.log(`❌ КРИТИЧНО ОТСУТСТВУЕТ: ${path.basename(lib)}`);
+      }
+    }
+
+    // 3. Критические Forge библиотеки в ПРАВИЛЬНОМ порядке
+    const coreForgeLibs = [
+      "cpw/mods/securejarhandler/2.1.10/securejarhandler-2.1.10.jar",
+      "cpw/mods/modlauncher/10.0.9/modlauncher-10.0.9.jar",
+
+      // ASM библиотеки - ОБНОВЛЕНЫ ДО 9.7.1
+      "org/ow2/asm/asm/9.7.1/asm-9.7.1.jar",
+      "org/ow2/asm/asm-commons/9.7.1/asm-commons-9.7.1.jar",
+      "org/ow2/asm/asm-tree/9.7.1/asm-tree-9.7.1.jar",
+      "org/ow2/asm/asm-util/9.7.1/asm-util-9.7.1.jar",
+      "org/ow2/asm/asm-analysis/9.7.1/asm-analysis-9.7.1.jar",
 
       // FML компоненты
       "net/minecraftforge/fmlloader/1.20.1-47.3.33/fmlloader-1.20.1-47.3.33.jar",
@@ -2461,7 +2491,7 @@ class MinecraftLauncher {
       }
     }
 
-    // 3. Добавляем ВСЕ остальные библиотеки
+    // 4. Добавляем ВСЕ остальные библиотеки
     const allOtherJars = await this.findJarFiles(libsDir);
     const filteredJars = allOtherJars.filter((jar) => {
       // Исключаем уже добавленные
@@ -2477,7 +2507,7 @@ class MinecraftLauncher {
 
     classpath.push(...filteredJars);
 
-    // 4. Minecraft и Forge JAR файлы
+    // 5. Minecraft JAR ПОСЛЕДНИМ
     const mcJar = path.join(
       instancePath,
       "versions",
@@ -2492,6 +2522,7 @@ class MinecraftLauncher {
     console.log(`📚 Итоговый classpath: ${classpath.length} файлов`);
     return classpath.join(path.delimiter);
   }
+
   async ensureMinecraftJar(instancePath, mcVersion) {
     const mcDir = path.join(instancePath, "versions", mcVersion);
     const mcJar = path.join(mcDir, `${mcVersion}.jar`);

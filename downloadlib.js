@@ -181,63 +181,63 @@ async function downloadMissingLibraries(
     // ASM библиотеки - ПОЛНЫЙ НАБОР (КРИТИЧНО!)
     // =============================================
     {
-      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.5/asm-9.5.jar",
+      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm/9.7.1/asm-9.7.1.jar",
       path: path.join(
         libsDir,
         "org",
         "ow2",
         "asm",
         "asm",
-        "9.5",
-        "asm-9.5.jar"
+        "9.7.1",
+        "asm-9.7.1.jar"
       ),
     },
     {
-      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-tree/9.5/asm-tree-9.5.jar",
+      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-tree/9.7.1/asm-tree-9.7.1.jar",
       path: path.join(
         libsDir,
         "org",
         "ow2",
         "asm",
         "asm-tree",
-        "9.5",
-        "asm-tree-9.5.jar"
+        "9.7.1",
+        "asm-tree-9.7.1.jar"
       ),
     },
     {
-      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-commons/9.5/asm-commons-9.5.jar",
+      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-commons/9.7.1/asm-commons-9.7.1.jar",
       path: path.join(
         libsDir,
         "org",
         "ow2",
         "asm",
         "asm-commons",
-        "9.5",
-        "asm-commons-9.5.jar"
+        "9.7.1",
+        "asm-commons-9.7.1.jar"
       ),
     },
     {
-      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-util/9.5/asm-util-9.5.jar",
+      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-util/9.7.1/asm-util-9.7.1.jar",
       path: path.join(
         libsDir,
         "org",
         "ow2",
         "asm",
         "asm-util",
-        "9.5",
-        "asm-util-9.5.jar"
+        "9.7.1",
+        "asm-util-9.7.1.jar"
       ),
     },
     {
-      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-analysis/9.5/asm-analysis-9.5.jar",
+      url: "https://repo1.maven.org/maven2/org/ow2/asm/asm-analysis/9.7.1/asm-analysis-9.7.1.jar",
       path: path.join(
         libsDir,
         "org",
         "ow2",
         "asm",
         "asm-analysis",
-        "9.5",
-        "asm-analysis-9.5.jar"
+        "9.7.1",
+        "asm-analysis-9.7.1.jar"
       ),
     },
 
