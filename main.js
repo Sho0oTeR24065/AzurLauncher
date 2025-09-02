@@ -430,18 +430,67 @@ class ProfileManager {
           continue;
         }
 
-        // Пропускаем некоторые аргументы которые мы обрабатываем отдельно
-        if (
-          !processedArg.startsWith("-p") &&
-          !processedArg.startsWith("--module-path") &&
-          !processedArg.startsWith("-cp") &&
-          !processedArg.startsWith("-classpath") &&
-          processedArg.trim().length > 0
-        ) {
+        // ИСПРАВЛЕНИЕ: Правильная обработка -cp аргумента
+        if (processedArg === "-cp" || processedArg === "-classpath") {
+          // Добавляем -cp
           jvmArgs.push(processedArg);
           console.log(`Добавлен JVM аргумент: ${processedArg}`);
-        } else {
-          console.log(`Пропущен JVM аргумент: ${processedArg}`);
+
+          // Проверяем, есть ли следующий аргумент (должен быть classpath)
+          if (i + 1 < profileJvmArgs.length) {
+            const nextArg = profileJvmArgs[i + 1];
+            if (typeof nextArg === "string") {
+              let processedClasspath = this.replaceVariables(
+                nextArg,
+                variables
+              );
+
+              // Проверяем на нерешенные переменные в classpath
+              if (processedClasspath.includes("${")) {
+                console.log(
+                  `⚠️ Пропускаем classpath с нерешенными переменными: ${processedClasspath}`
+                );
+                // Убираем предыдущий -cp так как classpath недоступен
+                jvmArgs.pop();
+                i++; // Пропускаем следующий аргумент
+                continue;
+              }
+
+              // Добавляем classpath как следующий аргумент
+              jvmArgs.push(processedClasspath);
+              console.log(
+                `Добавлен classpath (${
+                  processedClasspath.split(path.delimiter).length
+                } элементов)`
+              );
+              i++; // Пропускаем следующий аргумент, так как мы его уже обработали
+              continue;
+            }
+          }
+        }
+
+        // Пропускаем module path аргументы - они обрабатываются отдельно
+        if (processedArg === "-p" || processedArg === "--module-path") {
+          console.log(
+            `Пропущен JVM аргумент (обрабатывается отдельно): ${processedArg}`
+          );
+          // Также пропускаем следующий аргумент если это module path
+          if (i + 1 < profileJvmArgs.length) {
+            const nextArg = profileJvmArgs[i + 1];
+            if (typeof nextArg === "string") {
+              console.log(
+                `Пропущен module path: ${nextArg.substring(0, 100)}...`
+              );
+              i++; // Пропускаем следующий аргумент
+            }
+          }
+          continue;
+        }
+
+        // Добавляем обычные JVM аргументы
+        if (processedArg.trim().length > 0) {
+          jvmArgs.push(processedArg);
+          console.log(`Добавлен JVM аргумент: ${processedArg}`);
         }
       } else if (typeof arg === "object" && arg.rules) {
         // Обработка условных аргументов
@@ -458,6 +507,7 @@ class ProfileManager {
                 continue;
               }
 
+              // Пропускаем module path и classpath аргументы в условных блоках
               if (
                 !processedArg.startsWith("-p") &&
                 !processedArg.startsWith("--module-path") &&
@@ -467,6 +517,8 @@ class ProfileManager {
               ) {
                 jvmArgs.push(processedArg);
                 console.log(`Добавлен условный JVM аргумент: ${processedArg}`);
+              } else {
+                console.log(`Пропущен условный JVM аргумент: ${processedArg}`);
               }
             }
           } else {
@@ -488,13 +540,15 @@ class ProfileManager {
             ) {
               jvmArgs.push(processedArg);
               console.log(`Добавлен условный JVM аргумент: ${processedArg}`);
+            } else {
+              console.log(`Пропущен условный JVM аргумент: ${processedArg}`);
             }
           }
         }
       }
     }
 
-    // Обрабатываем game аргументы
+    // Обрабатываем game аргументы (без изменений)
     const profileGameArgs = profile.arguments?.game || [];
     for (const arg of profileGameArgs) {
       if (typeof arg === "string") {
@@ -1689,7 +1743,7 @@ class MinecraftLauncher {
     // Строим полный classpath
     const fullClasspath = this.buildNonModularClasspath(instancePath, profile);
 
-    // ИСПРАВЛЕНИЕ: Подготавливаем все переменные которые могут быть в профиле
+    // Подготавливаем все переменные которые могут быть в профиле
     const variables = {
       library_directory: path.join(instancePath, "libraries"),
       classpath_separator: path.delimiter,
@@ -1706,13 +1760,21 @@ class MinecraftLauncher {
       assets_index_name: profile.assets || modpack.minecraft_version,
       game_directory: instancePath,
       user_properties: "{}",
-      // НОВЫЕ переменные:
       classpath: fullClasspath,
       primary_jar: clientJar,
       path_separator: path.delimiter,
       game_assets: path.join(instancePath, "assets"),
       auth_session:
         "token:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+      // Добавляем дополнительные переменные которые могут быть нужны
+      clientid: "", // Пустая строка для clientid
+      auth_xuid: "", // Пустая строка для auth_xuid
+      resolution_width: "854", // Значения по умолчанию
+      resolution_height: "480",
+      quickPlayPath: "", // Пустые значения для quick play
+      quickPlaySingleplayer: "",
+      quickPlayMultiplayer: "",
+      quickPlayRealms: "",
     };
 
     console.log("Переменные для замещения:", Object.keys(variables));
@@ -1815,35 +1877,49 @@ class MinecraftLauncher {
       "jdk.naming.dns/com.sun.jndi.dns=java.naming",
     ];
 
-    // Финальные аргументы
+    // Финальные JVM аргументы
     const finalJvmArgs = [...baseJvmArgs, ...moduleArgs, ...jvmArgs];
 
-    // Game аргументы
-    const finalGameArgs = [
-      ...gameArgs,
-      "--username",
-      username,
-      "--version",
-      forgeVersionId,
-      "--gameDir",
-      instancePath,
-      "--assetsDir",
-      path.join(instancePath, "assets"),
-      "--assetIndex",
-      profile.assets || modpack.minecraft_version,
-      "--uuid",
-      this.generateOfflineUUID(username),
-      "--accessToken",
-      "00000000-0000-0000-0000-000000000000",
-      "--userType",
-      "legacy",
-      "--versionType",
-      "release",
-      "--width",
-      "854",
-      "--height",
-      "480",
+    // ИСПРАВЛЕНИЕ: Проверяем какие аргументы уже есть в gameArgs из профиля
+    // и не добавляем их повторно
+    const existingArgs = new Set();
+    for (let i = 0; i < gameArgs.length; i += 2) {
+      if (gameArgs[i] && gameArgs[i].startsWith("--")) {
+        existingArgs.add(gameArgs[i]);
+      }
+    }
+
+    console.log("Аргументы уже в профиле:", Array.from(existingArgs));
+
+    // Добавляем только те аргументы, которых нет в профиле
+    const additionalGameArgs = [];
+
+    // Базовые аргументы которые должны быть всегда
+    const requiredArgs = [
+      ["--username", username],
+      ["--version", forgeVersionId],
+      ["--gameDir", instancePath],
+      ["--assetsDir", path.join(instancePath, "assets")],
+      ["--assetIndex", profile.assets || modpack.minecraft_version],
+      ["--uuid", this.generateOfflineUUID(username)],
+      ["--accessToken", "00000000-0000-0000-0000-000000000000"],
+      ["--userType", "legacy"],
+      ["--versionType", "release"],
+      ["--width", "854"],
+      ["--height", "480"],
     ];
+
+    for (const [arg, value] of requiredArgs) {
+      if (!existingArgs.has(arg)) {
+        additionalGameArgs.push(arg, value);
+        console.log(`Добавляем недостающий аргумент: ${arg} = ${value}`);
+      } else {
+        console.log(`Аргумент ${arg} уже есть в профиле, пропускаем`);
+      }
+    }
+
+    // Финальные game аргументы
+    const finalGameArgs = [...gameArgs, ...additionalGameArgs];
 
     // Окончательная команда
     const allArgs = [...finalJvmArgs, profile.mainClass, ...finalGameArgs];
@@ -1857,7 +1933,9 @@ class MinecraftLauncher {
       `Module Path entries: ${modulePath.split(path.delimiter).length}`
     );
     console.log(`JVM args: ${finalJvmArgs.length}`);
-    console.log(`Game args: ${finalGameArgs.length}`);
+    console.log(`Game args (from profile): ${gameArgs.length}`);
+    console.log(`Game args (additional): ${additionalGameArgs.length}`);
+    console.log(`Game args (total): ${finalGameArgs.length}`);
     console.log(`Total args: ${allArgs.length}`);
 
     // Логируем аргументы для проверки переменных
@@ -1873,6 +1951,18 @@ class MinecraftLauncher {
           ", "
         )}`
       );
+    }
+
+    // Проверяем на дублирование game аргументов
+    const gameArgNames = [];
+    for (let i = 0; i < finalGameArgs.length; i++) {
+      if (finalGameArgs[i] && finalGameArgs[i].startsWith("--")) {
+        const argName = finalGameArgs[i];
+        if (gameArgNames.includes(argName)) {
+          console.warn(`⚠️ Обнаружен дублированный аргумент: ${argName}`);
+        }
+        gameArgNames.push(argName);
+      }
     }
 
     // Создаем переменные окружения
