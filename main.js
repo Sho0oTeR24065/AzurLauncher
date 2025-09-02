@@ -313,168 +313,216 @@ class ProfileManager {
   async downloadMissingForgeJars(instancePath, profile) {
     console.log("Проверяем отсутствующие Forge JAR-файлы...");
 
-    // Пути к ожидаемым файлам (берем из ошибки)
-    const expectedPaths = [
-      `libraries/net/minecraft/client/${profile.id}/client-${profile.id}-srg.jar`,
-      `libraries/net/minecraft/client/${profile.id}/client-${profile.id}-extra.jar`,
-      `libraries/net/minecraftforge/forge/${profile.id}/forge-${profile.id}-client.jar`,
-    ];
-
-    // Попытаемся найти URL для скачивания в библиотеках профиля
+    // Сначала проверим, что именно ожидает Forge в classpath
     const libraries = profile.libraries || [];
 
-    for (const expectedPath of expectedPaths) {
-      const fullPath = path.join(instancePath, expectedPath);
+    // Ищем библиотеки minecraft и forge, которые могут содержать нужные нам файлы
+    for (const lib of libraries) {
+      if (!lib.downloads || !this.checkLibraryRules(lib)) continue;
 
-      if (!(await fs.pathExists(fullPath))) {
-        console.log(`Отсутствует: ${expectedPath}`);
+      // Проверяем библиотеки minecraft или forge
+      if (
+        lib.name.includes("net.minecraft:client") ||
+        lib.name.includes("net.minecraftforge:forge")
+      ) {
+        console.log(`Проверяем библиотеку: ${lib.name}`);
 
-        // Ищем соответствующую библиотеку в профиле
-        const matchingLib = libraries.find((lib) => {
-          if (!lib.downloads) return false;
+        // Проверяем все доступные downloads в этой библиотеке
+        if (lib.downloads.classifiers) {
+          for (const [classifier, downloadInfo] of Object.entries(
+            lib.downloads.classifiers
+          )) {
+            const classifierPath = path.join(
+              instancePath,
+              "libraries",
+              downloadInfo.path
+            );
 
-          // Проверяем в основном artifact
-          if (lib.downloads.artifact && lib.downloads.artifact.path) {
-            if (expectedPath.includes(lib.downloads.artifact.path)) {
-              return true;
-            }
-          }
+            console.log(
+              `Проверяем classifier ${classifier}: ${downloadInfo.path}`
+            );
 
-          // Проверяем в classifiers
-          if (lib.downloads.classifiers) {
-            for (const classifier of Object.values(lib.downloads.classifiers)) {
-              if (expectedPath.includes(classifier.path)) {
-                return true;
-              }
-            }
-          }
-
-          return false;
-        });
-
-        if (matchingLib) {
-          console.log(`Найдена соответствующая библиотека для ${expectedPath}`);
-
-          // Пытаемся найти правильный URL
-          let downloadUrl = null;
-
-          if (matchingLib.downloads.classifiers) {
-            // Ищем в classifiers
-            for (const [classifierName, classifierInfo] of Object.entries(
-              matchingLib.downloads.classifiers
-            )) {
-              if (
-                expectedPath.includes(classifierInfo.path) ||
-                (expectedPath.includes("-srg.jar") &&
-                  classifierName === "srg") ||
-                (expectedPath.includes("-extra.jar") &&
-                  classifierName === "extra") ||
-                (expectedPath.includes("-client.jar") &&
-                  classifierName === "client")
-              ) {
-                downloadUrl = classifierInfo.url;
-                break;
-              }
-            }
-          }
-
-          if (!downloadUrl && matchingLib.downloads.artifact) {
-            downloadUrl = matchingLib.downloads.artifact.url;
-          }
-
-          if (downloadUrl) {
-            try {
+            if (!(await fs.pathExists(classifierPath))) {
               console.log(
-                `Скачиваем отсутствующий файл: ${path.basename(fullPath)}`
-              );
-              await fs.ensureDir(path.dirname(fullPath));
-              await this.launcher.downloadFile(downloadUrl, fullPath, null);
-              console.log(
-                `Скачан отсутствующий файл: ${path.basename(fullPath)}`
-              );
-            } catch (error) {
-              console.error(
-                `Ошибка скачивания ${path.basename(fullPath)}: ${error.message}`
+                `Отсутствует classifier ${classifier}: ${downloadInfo.path}`
               );
 
-              // Попробуем сгенерировать URL на основе стандартной схемы Maven
-              const alternativeUrl = this.generateMavenUrl(
-                expectedPath,
-                profile
-              );
-              if (alternativeUrl) {
-                try {
-                  console.log(`Пробуем альтернативный URL: ${alternativeUrl}`);
-                  await this.launcher.downloadFile(
-                    alternativeUrl,
-                    fullPath,
-                    null
-                  );
-                  console.log(
-                    `Скачан через альтернативный URL: ${path.basename(
-                      fullPath
-                    )}`
-                  );
-                } catch (altError) {
-                  console.error(
-                    `Альтернативное скачивание также неудачно: ${altError.message}`
+              try {
+                await fs.ensureDir(path.dirname(classifierPath));
+                await this.launcher.downloadFile(
+                  downloadInfo.url,
+                  classifierPath,
+                  null
+                );
+                console.log(
+                  `✓ Скачан classifier ${classifier}: ${path.basename(
+                    classifierPath
+                  )}`
+                );
+              } catch (error) {
+                console.error(
+                  `✗ Ошибка скачивания classifier ${classifier}: ${error.message}`
+                );
+
+                // Для критически важных файлов пробуем альтернативные источники
+                if (
+                  classifier === "srg" ||
+                  classifier === "extra" ||
+                  classifier === "client"
+                ) {
+                  await this.tryAlternativeDownload(
+                    classifierPath,
+                    lib,
+                    classifier
                   );
                 }
               }
-            }
-          } else {
-            console.log(`Не найден URL для ${expectedPath}`);
-          }
-        } else {
-          console.log(`Не найдена библиотека для ${expectedPath}`);
-
-          // Попробуем сгенерировать URL на основе стандартной схемы Maven
-          const alternativeUrl = this.generateMavenUrl(expectedPath, profile);
-          if (alternativeUrl) {
-            try {
-              console.log(`Пробуем сгенерированный URL: ${alternativeUrl}`);
-              await fs.ensureDir(path.dirname(fullPath));
-              await this.launcher.downloadFile(alternativeUrl, fullPath, null);
-              console.log(
-                `Скачан через сгенерированный URL: ${path.basename(fullPath)}`
-              );
-            } catch (error) {
-              console.log(`Сгенерированный URL не сработал: ${error.message}`);
+            } else {
+              console.log(`✓ Classifier ${classifier} уже существует`);
             }
           }
         }
-      } else {
-        console.log(`Уже существует: ${expectedPath}`);
+
+        // Проверяем основной artifact
+        if (lib.downloads.artifact) {
+          const artifactPath = path.join(
+            instancePath,
+            "libraries",
+            lib.downloads.artifact.path
+          );
+
+          if (!(await fs.pathExists(artifactPath))) {
+            console.log(
+              `Отсутствует основной artifact: ${lib.downloads.artifact.path}`
+            );
+
+            try {
+              await fs.ensureDir(path.dirname(artifactPath));
+              await this.launcher.downloadFile(
+                lib.downloads.artifact.url,
+                artifactPath,
+                null
+              );
+              console.log(
+                `✓ Скачан основной artifact: ${path.basename(artifactPath)}`
+              );
+            } catch (error) {
+              console.error(
+                `✗ Ошибка скачивания основного artifact: ${error.message}`
+              );
+            }
+          }
+        }
       }
+    }
+
+    // Дополнительная проверка: если файлы все еще отсутствуют, попробуем найти их через Minecraft Launcher
+    await this.downloadMinecraftClientFiles(instancePath, profile);
+  }
+
+  // НОВЫЙ МЕТОД: Скачивание файлов Minecraft клиента
+  async downloadMinecraftClientFiles(instancePath, profile) {
+    console.log("Пытаемся скачать файлы Minecraft клиента...");
+
+    // Извлекаем версию Minecraft из ID профиля (например, "1.20.1" из "1.20.1-forge-47.3.33")
+    const mcVersion = profile.id.split("-")[0]; // "1.20.1"
+
+    console.log(`Версия Minecraft: ${mcVersion}`);
+
+    try {
+      // Скачиваем манифест версий Minecraft
+      const manifestUrl =
+        "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+      const manifestPath = path.join(instancePath, "temp_manifest.json");
+
+      await this.launcher.downloadFile(manifestUrl, manifestPath, null);
+      const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+      await fs.remove(manifestPath);
+
+      // Ищем нужную версию
+      const versionInfo = manifest.versions.find((v) => v.id === mcVersion);
+
+      if (versionInfo) {
+        console.log(`Найдена версия ${mcVersion}, скачиваем профиль...`);
+
+        // Скачиваем профиль версии
+        const versionProfilePath = path.join(instancePath, "temp_version.json");
+        await this.launcher.downloadFile(
+          versionInfo.url,
+          versionProfilePath,
+          null
+        );
+        const versionProfile = JSON.parse(
+          await fs.readFile(versionProfilePath, "utf8")
+        );
+        await fs.remove(versionProfilePath);
+
+        // Скачиваем клиентский JAR если его нет
+        if (versionProfile.downloads && versionProfile.downloads.client) {
+          const clientJarPath = path.join(
+            instancePath,
+            "versions",
+            mcVersion,
+            `${mcVersion}.jar`
+          );
+
+          if (!(await fs.pathExists(clientJarPath))) {
+            console.log(`Скачиваем клиентский JAR Minecraft ${mcVersion}...`);
+            await fs.ensureDir(path.dirname(clientJarPath));
+            await this.launcher.downloadFile(
+              versionProfile.downloads.client.url,
+              clientJarPath,
+              null
+            );
+            console.log(`✓ Скачан клиентский JAR: ${mcVersion}.jar`);
+          }
+        }
+      } else {
+        console.log(`Версия ${mcVersion} не найдена в манифесте`);
+      }
+    } catch (error) {
+      console.error(`Ошибка скачивания файлов Minecraft: ${error.message}`);
     }
   }
 
-  // НОВЫЙ МЕТОД: Генерация Maven URL для отсутствующих файлов
-  generateMavenUrl(libraryPath, profile) {
-    // Базовые URL репозиториев
-    const repositories = [
-      "https://maven.minecraftforge.net/",
-      "https://libraries.minecraft.net/",
-      "https://repo1.maven.org/maven2/",
-    ];
+  // НОВЫЙ МЕТОД: Альтернативное скачивание
+  async tryAlternativeDownload(filePath, lib, classifier) {
+    console.log(`Пытаемся альтернативное скачивание для ${classifier}...`);
 
-    // Убираем "libraries/" из начала пути
-    const cleanPath = libraryPath.replace(/^libraries\//, "");
+    // Альтернативные репозитории и URLs
+    const alternatives = [];
 
-    // Для каждого репозитория пробуем сформировать URL
-    for (const repo of repositories) {
-      const url = repo + cleanPath;
-
-      // Проверяем что URL выглядит разумно
-      if (
-        url.includes(".jar") &&
-        (url.includes("minecraft") || url.includes("forge"))
-      ) {
-        return url;
+    if (classifier === "srg") {
+      // SRG файлы обычно в том же месте но с другим classifier
+      const originalUrl = lib.downloads.artifact?.url;
+      if (originalUrl) {
+        const srgUrl = originalUrl.replace(".jar", "-srg.jar");
+        alternatives.push(srgUrl);
       }
     }
 
-    return null;
+    if (classifier === "extra") {
+      // Extra файлы обычно рядом с основными
+      const originalUrl = lib.downloads.artifact?.url;
+      if (originalUrl) {
+        const extraUrl = originalUrl.replace(".jar", "-extra.jar");
+        alternatives.push(extraUrl);
+      }
+    }
+
+    // Пробуем альтернативные URLs
+    for (const altUrl of alternatives) {
+      try {
+        console.log(`Пробуем альтернативный URL: ${altUrl}`);
+        await this.launcher.downloadFile(altUrl, filePath, null);
+        console.log(`✓ Успешно скачан через альтернативный URL`);
+        return;
+      } catch (error) {
+        console.log(`✗ Альтернативный URL неудачен: ${error.message}`);
+      }
+    }
+
+    console.log(`Все альтернативные источники неудачны для ${classifier}`);
   }
 
   checkLibraryRules(library) {
