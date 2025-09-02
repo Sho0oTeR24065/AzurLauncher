@@ -617,6 +617,19 @@
             >
               🚀 Запустить игру
             </button>
+            <!-- ДОБАВИТЬ эту кнопку -->
+            <button
+              class="btn btn-primary"
+              id="diagnosticBtn"
+              onclick="runDiagnostic()"
+              style="
+                background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+                font-size: 12px;
+                padding: 12px 20px;
+              "
+            >
+              🔧 Диагностика
+            </button>
           </div>
         </div>
 
@@ -688,7 +701,130 @@
           recommendation.className = "memory-recommendation high";
         }
       }
+      async function runDiagnostic() {
+        if (!selectedModpack) {
+          updateStatus("⚠️ Сначала выберите модпак!", "error");
+          return;
+        }
 
+        const diagnosticBtn = document.getElementById("diagnosticBtn");
+        diagnosticBtn.disabled = true;
+        diagnosticBtn.textContent = "🔧 Проверка...";
+
+        updateStatus("🔧 Запуск диагностики библиотек...", "info");
+
+        try {
+          // Сначала проверим установлен ли модпак
+          const installed = await ipcRenderer.invoke(
+            "check-modpack-installed",
+            selectedModpack.id
+          );
+
+          if (!installed) {
+            updateStatus(
+              "⚠️ Модпак не установлен! Сначала скачайте модпак",
+              "warning"
+            );
+            alert(
+              "Модпак не установлен!\n\nДля диагностики нужно сначала скачать и установить модпак."
+            );
+            return;
+          }
+
+          // Запускаем диагностику
+          const result = await ipcRenderer.invoke(
+            "diagnostic-check-libraries",
+            selectedModpack.id
+          );
+
+          if (result.success) {
+            updateStatus(
+              "✅ Диагностика завершена. Смотрите консоль для деталей",
+              "success"
+            );
+
+            // Показываем результат
+            alert(
+              "✅ Диагностика завершена!\n\n" +
+                "📋 Подробная информация выведена в консоль программы.\n\n" +
+                "🔍 Откройте консоль разработчика (F12) или смотрите консоль приложения.\n\n" +
+                "❌ Если обнаружены проблемы - перескачайте модпак."
+            );
+          } else {
+            throw new Error(result.error);
+          }
+        } catch (error) {
+          updateStatus("❌ Ошибка диагностики: " + error.message, "error");
+          console.error("Diagnostic error:", error);
+        } finally {
+          diagnosticBtn.disabled = false;
+          diagnosticBtn.textContent = "🔧 Диагностика";
+        }
+      }
+
+      async function updateSelectedModpack() {
+        if (!selectedModpack) return;
+
+        document.getElementById("modpackName").textContent =
+          selectedModpack.name;
+        document.getElementById("modpackDescription").textContent =
+          selectedModpack.description;
+        document.getElementById("modpackVersion").textContent =
+          selectedModpack.minecraft_version || selectedModpack.version;
+        document.getElementById("modpackLoader").textContent =
+          selectedModpack.modloader.toUpperCase();
+        document.getElementById("modpackForge").textContent =
+          selectedModpack.forge_version;
+        document.getElementById("modpackMemory").textContent =
+          selectedModpack.memory;
+        document.getElementById("modpackDetails").style.display = "grid";
+
+        try {
+          const installed = await ipcRenderer.invoke(
+            "check-modpack-installed",
+            selectedModpack.id
+          );
+          const downloadBtn = document.getElementById("downloadBtn");
+          const launchBtn = document.getElementById("launchBtn");
+          const diagnosticBtn = document.getElementById("diagnosticBtn");
+
+          downloadBtn.disabled = installed || !javaReady;
+          launchBtn.disabled = !installed || !javaReady;
+
+          // ИСПРАВЛЕНИЕ: Кнопка диагностики всегда доступна когда выбран модпак
+          diagnosticBtn.disabled = false;
+
+          if (!javaReady) {
+            updateStatus("⚠️ Ожидание установки Java...", "warning");
+          } else if (installed) {
+            updateStatus("🎮 Модпак готов к запуску", "success");
+            downloadBtn.textContent = "✅ Установлен";
+          } else {
+            updateStatus("📥 Модпак требует скачивания", "info");
+            downloadBtn.textContent = "📥 Скачать модпак";
+          }
+        } catch (error) {
+          updateStatus("❌ Ошибка проверки модпака", "error");
+        }
+      }
+      async function quickDiagnostic() {
+        if (!selectedModpack) {
+          console.log("❌ Модпак не выбран");
+          return;
+        }
+
+        console.log("🔧 Быстрая диагностика для модпака:", selectedModpack.id);
+
+        try {
+          const result = await ipcRenderer.invoke(
+            "diagnostic-check-libraries",
+            selectedModpack.id
+          );
+          console.log("✅ Диагностика выполнена:", result);
+        } catch (error) {
+          console.error("❌ Ошибка диагностики:", error);
+        }
+      }
       // Получение информации о системной памяти
       async function getSystemMemoryInfo() {
         try {
@@ -1055,48 +1191,6 @@
           } catch (error) {
             console.error("Ошибка сохранения никнейма:", error);
           }
-        }
-      }
-
-      async function updateSelectedModpack() {
-        if (!selectedModpack) return;
-
-        document.getElementById("modpackName").textContent =
-          selectedModpack.name;
-        document.getElementById("modpackDescription").textContent =
-          selectedModpack.description;
-        document.getElementById("modpackVersion").textContent =
-          selectedModpack.minecraft_version || selectedModpack.version;
-        document.getElementById("modpackLoader").textContent =
-          selectedModpack.modloader.toUpperCase();
-        document.getElementById("modpackForge").textContent =
-          selectedModpack.forge_version;
-        document.getElementById("modpackMemory").textContent =
-          selectedModpack.memory;
-        document.getElementById("modpackDetails").style.display = "grid";
-
-        try {
-          const installed = await ipcRenderer.invoke(
-            "check-modpack-installed",
-            selectedModpack.id
-          );
-          const downloadBtn = document.getElementById("downloadBtn");
-          const launchBtn = document.getElementById("launchBtn");
-
-          downloadBtn.disabled = installed || !javaReady;
-          launchBtn.disabled = !installed || !javaReady;
-
-          if (!javaReady) {
-            updateStatus("⚠️ Ожидание установки Java...", "warning");
-          } else if (installed) {
-            updateStatus("🎮 Модпак готов к запуску", "success");
-            downloadBtn.textContent = "✅ Установлен";
-          } else {
-            updateStatus("📥 Модпак требует скачивания", "info");
-            downloadBtn.textContent = "📥 Скачать модпак";
-          }
-        } catch (error) {
-          updateStatus("❌ Ошибка проверки модпака", "error");
         }
       }
 

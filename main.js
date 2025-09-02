@@ -276,27 +276,50 @@ class ProfileManager {
   }
 
   buildModulePathFromProfile(instancePath, profile) {
+    console.log("Строим module path из профиля...");
+
     const jvmArgs = profile.arguments?.jvm || [];
 
-    // Ищем -p или --module-path
+    // Ищем -p или --module-path в аргументах профиля
     let modulePathIndex = jvmArgs.findIndex((arg) => arg === "-p");
     if (modulePathIndex === -1) {
       modulePathIndex = jvmArgs.findIndex((arg) => arg === "--module-path");
     }
 
-    if (modulePathIndex === -1 || !jvmArgs[modulePathIndex + 1]) {
+    let modulePath = "";
+
+    if (modulePathIndex !== -1 && jvmArgs[modulePathIndex + 1]) {
+      modulePath = jvmArgs[modulePathIndex + 1];
+
+      // Заменяем переменные
+      modulePath = modulePath.replace(
+        /\$\{library_directory\}/g,
+        path.join(instancePath, "libraries")
+      );
+      modulePath = modulePath.replace(
+        /\$\{classpath_separator\}/g,
+        path.delimiter
+      );
+      modulePath = modulePath.replace(/\$\{version_name\}/g, profile.id);
+
+      console.log(
+        `Module path найден в профиле: ${
+          modulePath.split(path.delimiter).length
+        } элементов`
+      );
+    } else {
       console.log("Module path не найден в профиле, собираем вручную");
 
-      // ИСПРАВЛЕНИЕ: Собираем module path из необходимых библиотек
+      // Критически важные модульные библиотеки для Forge
       const moduleLibraries = [
-        "bootstraplauncher",
-        "securejarhandler",
-        "asm-commons",
-        "asm-util",
-        "asm-analysis",
-        "asm-tree",
-        "asm",
-        "JarJarFileSystems",
+        "cpw.mods:bootstraplauncher",
+        "cpw.mods:securejarhandler",
+        "org.ow2.asm:asm-commons",
+        "org.ow2.asm:asm-util",
+        "org.ow2.asm:asm-analysis",
+        "org.ow2.asm:asm-tree",
+        "org.ow2.asm:asm",
+        "net.minecraftforge:JarJarFileSystems",
       ];
 
       const modulePaths = [];
@@ -306,9 +329,17 @@ class ProfileManager {
         if (!this.checkLibraryRules(lib) || !lib.downloads?.artifact) continue;
 
         const libName = lib.name;
-        const shouldInclude = moduleLibraries.some((modLib) =>
-          libName.includes(modLib)
-        );
+
+        // Проверяем точное соответствие имени библиотеки
+        const shouldInclude = moduleLibraries.some((modLib) => {
+          // Более точное сравнение имен
+          if (libName.startsWith(modLib)) {
+            return true;
+          }
+          // Дополнительные проверки для сокращенных имен
+          const shortName = modLib.split(":")[1] || modLib;
+          return libName.includes(shortName);
+        });
 
         if (shouldInclude) {
           const libPath = path.join(
@@ -316,28 +347,55 @@ class ProfileManager {
             "libraries",
             lib.downloads.artifact.path
           );
+
           if (fs.existsSync(libPath)) {
             modulePaths.push(libPath);
+            console.log(
+              `Добавлен в module path: ${lib.name} -> ${path.basename(libPath)}`
+            );
+          } else {
+            console.log(
+              `КРИТИЧЕСКАЯ ОШИБКА: Модульная библиотека не найдена: ${libPath}`
+            );
+            console.log(`Имя библиотеки: ${lib.name}`);
           }
         }
       }
 
-      return modulePaths.join(path.delimiter);
+      if (modulePaths.length === 0) {
+        console.error("ОШИБКА: Не найдено ни одной модульной библиотеки!");
+        console.log("Доступные библиотеки:");
+        libraries.slice(0, 10).forEach((lib) => {
+          console.log(`  - ${lib.name}`);
+        });
+
+        // Возвращаем null чтобы запуск упал с понятной ошибкой
+        return null;
+      }
+
+      modulePath = modulePaths.join(path.delimiter);
+      console.log(
+        `Собран module path вручную: ${modulePaths.length} элементов`
+      );
     }
 
-    let modulePath = jvmArgs[modulePathIndex + 1];
+    // Проверяем что все файлы в module path существуют
+    const pathEntries = modulePath.split(path.delimiter);
+    const missingFiles = [];
 
-    // Заменяем переменные
-    modulePath = modulePath.replace(
-      /\$\{library_directory\}/g,
-      path.join(instancePath, "libraries")
-    );
-    modulePath = modulePath.replace(
-      /\$\{classpath_separator\}/g,
-      path.delimiter
-    );
-    modulePath = modulePath.replace(/\$\{version_name\}/g, profile.id);
+    pathEntries.forEach((pathEntry) => {
+      if (pathEntry.trim() && !fs.existsSync(pathEntry.trim())) {
+        missingFiles.push(pathEntry);
+      }
+    });
 
+    if (missingFiles.length > 0) {
+      console.error("ОШИБКА: Отсутствующие файлы в module path:");
+      missingFiles.forEach((file) => console.error(`  - ${file}`));
+      return null;
+    }
+
+    console.log(`Module path готов: ${pathEntries.length} файлов`);
     return modulePath;
   }
 
@@ -345,20 +403,45 @@ class ProfileManager {
     const jvmArgs = [];
     const gameArgs = [];
 
+    console.log("Обрабатываем аргументы Forge...");
+    console.log("Переменные для замены:", Object.keys(variables));
+
     // Обрабатываем JVM аргументы из профиля
     const profileJvmArgs = profile.arguments?.jvm || [];
-    for (const arg of profileJvmArgs) {
+
+    for (let i = 0; i < profileJvmArgs.length; i++) {
+      const arg = profileJvmArgs[i];
+
       if (typeof arg === "string") {
         let processedArg = this.replaceVariables(arg, variables);
+
+        // ИСПРАВЛЕНИЕ: Специальная обработка проблемных аргументов
+        if (processedArg.includes("${classpath}")) {
+          console.log(
+            `⚠️ Найден нерешенный ${classpath} в аргументе: ${processedArg}`
+          );
+          // Пропускаем этот аргумент полностью
+          continue;
+        }
+
+        if (processedArg.includes("${")) {
+          console.log(`⚠️ Найдена нерешенная переменная в: ${processedArg}`);
+          // Пропускаем аргументы с нерешенными переменными
+          continue;
+        }
 
         // Пропускаем некоторые аргументы которые мы обрабатываем отдельно
         if (
           !processedArg.startsWith("-p") &&
           !processedArg.startsWith("--module-path") &&
           !processedArg.startsWith("-cp") &&
-          !processedArg.startsWith("-classpath")
+          !processedArg.startsWith("-classpath") &&
+          processedArg.trim().length > 0
         ) {
           jvmArgs.push(processedArg);
+          console.log(`Добавлен JVM аргумент: ${processedArg}`);
+        } else {
+          console.log(`Пропущен JVM аргумент: ${processedArg}`);
         }
       } else if (typeof arg === "object" && arg.rules) {
         // Обработка условных аргументов
@@ -366,24 +449,45 @@ class ProfileManager {
           if (Array.isArray(arg.value)) {
             for (const value of arg.value) {
               let processedArg = this.replaceVariables(value, variables);
+
+              // Проверка на нерешенные переменные
+              if (processedArg.includes("${")) {
+                console.log(
+                  `⚠️ Пропускаем условный аргумент с нерешенной переменной: ${processedArg}`
+                );
+                continue;
+              }
+
               if (
                 !processedArg.startsWith("-p") &&
                 !processedArg.startsWith("--module-path") &&
                 !processedArg.startsWith("-cp") &&
-                !processedArg.startsWith("-classpath")
+                !processedArg.startsWith("-classpath") &&
+                processedArg.trim().length > 0
               ) {
                 jvmArgs.push(processedArg);
+                console.log(`Добавлен условный JVM аргумент: ${processedArg}`);
               }
             }
           } else {
             let processedArg = this.replaceVariables(arg.value, variables);
+
+            if (processedArg.includes("${")) {
+              console.log(
+                `⚠️ Пропускаем условный аргумент с нерешенной переменной: ${processedArg}`
+              );
+              continue;
+            }
+
             if (
               !processedArg.startsWith("-p") &&
               !processedArg.startsWith("--module-path") &&
               !processedArg.startsWith("-cp") &&
-              !processedArg.startsWith("-classpath")
+              !processedArg.startsWith("-classpath") &&
+              processedArg.trim().length > 0
             ) {
               jvmArgs.push(processedArg);
+              console.log(`Добавлен условный JVM аргумент: ${processedArg}`);
             }
           }
         }
@@ -394,19 +498,50 @@ class ProfileManager {
     const profileGameArgs = profile.arguments?.game || [];
     for (const arg of profileGameArgs) {
       if (typeof arg === "string") {
-        gameArgs.push(this.replaceVariables(arg, variables));
+        let processedArg = this.replaceVariables(arg, variables);
+
+        // Проверка на нерешенные переменные
+        if (processedArg.includes("${")) {
+          console.log(
+            `⚠️ Пропускаем game аргумент с нерешенной переменной: ${processedArg}`
+          );
+          continue;
+        }
+
+        gameArgs.push(processedArg);
       } else if (typeof arg === "object" && arg.rules) {
         if (this.checkArgumentRules(arg.rules)) {
           if (Array.isArray(arg.value)) {
-            gameArgs.push(
-              ...arg.value.map((v) => this.replaceVariables(v, variables))
-            );
+            for (const value of arg.value) {
+              let processedArg = this.replaceVariables(value, variables);
+
+              if (processedArg.includes("${")) {
+                console.log(
+                  `⚠️ Пропускаем условный game аргумент с нерешенной переменной: ${processedArg}`
+                );
+                continue;
+              }
+
+              gameArgs.push(processedArg);
+            }
           } else {
-            gameArgs.push(this.replaceVariables(arg.value, variables));
+            let processedArg = this.replaceVariables(arg.value, variables);
+
+            if (processedArg.includes("${")) {
+              console.log(
+                `⚠️ Пропускаем условный game аргумент с нерешенной переменной: ${processedArg}`
+              );
+              continue;
+            }
+
+            gameArgs.push(processedArg);
           }
         }
       }
     }
+
+    console.log(`Обработано JVM аргументов: ${jvmArgs.length}`);
+    console.log(`Обработано Game аргументов: ${gameArgs.length}`);
 
     return { jvmArgs, gameArgs };
   }
@@ -439,8 +574,23 @@ class ProfileManager {
   replaceVariables(arg, variables) {
     let result = arg;
 
+    // Сначала заменяем все известные переменные
     for (const [key, value] of Object.entries(variables)) {
-      result = result.replace(new RegExp(`\\$\\{${key}\\}`, "g"), value);
+      const regex = new RegExp(`\\$\\{${key}\\}`, "g");
+      result = result.replace(regex, value);
+    }
+
+    // ИСПРАВЛЕНИЕ: Специальная обработка оставшихся переменных
+    const unresolvedVars = result.match(/\$\{[^}]+\}/g);
+    if (unresolvedVars) {
+      console.log(
+        `⚠️ Нерешенные переменные в "${arg}": ${unresolvedVars.join(", ")}`
+      );
+
+      // Для некоторых переменных устанавливаем значения по умолчанию
+      result = result.replace(/\$\{classpath\}/g, ""); // Убираем ${classpath}
+      result = result.replace(/\$\{primary_jar\}/g, ""); // Убираем ${primary_jar}
+      result = result.replace(/\$\{path_separator\}/g, path.delimiter);
     }
 
     return result;
@@ -972,6 +1122,74 @@ class MinecraftLauncher {
     });
   }
 
+  async diagnosticCheckLibraries(modpackId) {
+    const instancePath = path.join(this.instancesDir, modpackId);
+    const librariesDir = path.join(instancePath, "libraries");
+
+    console.log("=== ДИАГНОСТИКА БИБЛИОТЕК ===");
+    console.log(`Instance path: ${instancePath}`);
+    console.log(`Libraries dir: ${librariesDir}`);
+
+    if (!fs.existsSync(librariesDir)) {
+      console.log("ОШИБКА: Папка libraries не существует!");
+      return false;
+    }
+
+    // Критические библиотеки для Forge
+    const criticalLibraries = [
+      "bootstraplauncher",
+      "securejarhandler",
+      "asm-commons",
+      "asm-util",
+      "asm-analysis",
+      "asm-tree",
+      "asm",
+      "JarJarFileSystems",
+    ];
+
+    console.log("Поиск критических библиотек:");
+
+    for (const libName of criticalLibraries) {
+      const found = await this.findLibraryFile(librariesDir, libName);
+      if (found.length > 0) {
+        console.log(`✓ ${libName}: найдено ${found.length} файлов`);
+        found.forEach((f) => console.log(`  - ${f}`));
+      } else {
+        console.log(`✗ ${libName}: НЕ НАЙДЕНО`);
+      }
+    }
+
+    return true;
+  }
+
+  // Вспомогательный метод для поиска библиотек
+  async findLibraryFile(librariesDir, libName) {
+    const found = [];
+
+    try {
+      const searchInDir = async (dir) => {
+        const entries = await fs.readdir(dir);
+
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry);
+          const stat = await fs.stat(fullPath);
+
+          if (stat.isDirectory()) {
+            await searchInDir(fullPath);
+          } else if (entry.includes(libName) && entry.endsWith(".jar")) {
+            found.push(fullPath);
+          }
+        }
+      };
+
+      await searchInDir(librariesDir);
+    } catch (error) {
+      console.log(`Ошибка поиска в ${librariesDir}: ${error.message}`);
+    }
+
+    return found;
+  }
+
   async findJavaExecutableInDir(dir) {
     const platform = os.platform();
     const javaFileName = platform === "win32" ? "java.exe" : "java";
@@ -1457,20 +1675,117 @@ class MinecraftLauncher {
       "natives"
     );
 
-    // Подготавливаем переменные
+    // Подготавливаем память
     const memory = customMemoryGB ? `${customMemoryGB}G` : modpack.memory;
 
-    // Строим Module Path
-    const modulePath = this.profileManager.buildModulePathFromProfile(
+    // Строим classpath для основного Minecraft JAR
+    const clientJar = path.join(
+      instancePath,
+      "versions",
+      profile.id,
+      `${profile.id}.jar`
+    );
+
+    // Строим полный classpath
+    const fullClasspath = this.buildNonModularClasspath(instancePath, profile);
+
+    // ИСПРАВЛЕНИЕ: Подготавливаем все переменные которые могут быть в профиле
+    const variables = {
+      library_directory: path.join(instancePath, "libraries"),
+      classpath_separator: path.delimiter,
+      version_name: profile.id,
+      natives_directory: nativesDir,
+      launcher_name: this.config.launcher_name || "AzureLauncher",
+      launcher_version: "1.0.0",
+      auth_player_name: username,
+      auth_uuid: this.generateOfflineUUID(username),
+      auth_access_token: "00000000-0000-0000-0000-000000000000",
+      user_type: "legacy",
+      version_type: profile.type || "release",
+      assets_root: path.join(instancePath, "assets"),
+      assets_index_name: profile.assets || modpack.minecraft_version,
+      game_directory: instancePath,
+      user_properties: "{}",
+      // НОВЫЕ переменные:
+      classpath: fullClasspath,
+      primary_jar: clientJar,
+      path_separator: path.delimiter,
+      game_assets: path.join(instancePath, "assets"),
+      auth_session:
+        "token:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+    };
+
+    console.log("Переменные для замещения:", Object.keys(variables));
+
+    // Строим Module Path из профиля
+    let modulePath = this.profileManager.buildModulePathFromProfile(
       instancePath,
       profile
     );
 
-    // Строим Classpath (НЕ включаем модульные библиотеки)
-    const classpath = this.buildNonModularClasspath(instancePath, profile);
+    // Если module path пустой или не найден, строим вручную
+    if (!modulePath) {
+      console.log("Строим module path вручную...");
+      const moduleLibraries = [
+        "bootstraplauncher",
+        "securejarhandler",
+        "asm-commons",
+        "asm-util",
+        "asm-analysis",
+        "asm-tree",
+        "asm",
+        "JarJarFileSystems",
+      ];
 
-    // ИСПРАВЛЕНИЕ: Правильные системные свойства для BootstrapLauncher
-    const systemProperties = [
+      const modulePaths = [];
+      const libraries = profile.libraries || [];
+
+      for (const lib of libraries) {
+        if (
+          !this.profileManager.checkLibraryRules(lib) ||
+          !lib.downloads?.artifact
+        )
+          continue;
+
+        const libName = lib.name;
+        const shouldInclude = moduleLibraries.some((modLib) =>
+          libName.toLowerCase().includes(modLib.toLowerCase())
+        );
+
+        if (shouldInclude) {
+          const libPath = path.join(
+            instancePath,
+            "libraries",
+            lib.downloads.artifact.path
+          );
+          if (fs.existsSync(libPath)) {
+            modulePaths.push(libPath);
+            console.log(`Добавлен в module path: ${path.basename(libPath)}`);
+          } else {
+            console.log(
+              `ВНИМАНИЕ: Модульная библиотека не найдена: ${libPath}`
+            );
+          }
+        }
+      }
+
+      modulePath = modulePaths.join(path.delimiter);
+    }
+
+    console.log(
+      `Module path содержит ${
+        modulePath.split(path.delimiter).length
+      } элементов`
+    );
+
+    // Обрабатываем аргументы из профиля
+    const { jvmArgs, gameArgs } = this.profileManager.processForgeArguments(
+      profile,
+      variables
+    );
+
+    // Базовые JVM аргументы
+    const baseJvmArgs = [
       `-Xmx${memory}`,
       `-Xms1G`,
       "-XX:+UseG1GC",
@@ -1481,22 +1796,31 @@ class MinecraftLauncher {
       "-XX:G1HeapRegionSize=32M",
       `-Djava.library.path=${nativesDir}`,
       `-Djna.tmpdir=${nativesDir}`,
-      `-Dnet.minecraftforge.gradle.GradleStart.srg.srg-mcp=${path.join(
-        instancePath,
-        "config"
-      )}`,
-      `-Dforge.logging.markers=REGISTRIES`,
-      `-Dforge.logging.console.level=debug`,
       `-Djava.net.preferIPv6Addresses=system`,
-      `-DignoreList=bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems`,
-      `-DlibraryDirectory=${path.join(instancePath, "libraries")}`,
-      `-DlegacyClassPath=${classpath}`,
-      `-p`,
-      modulePath,
     ];
 
-    // Game аргументы для BootstrapLauncher
-    const gameArgs = [
+    // Добавляем module path аргументы
+    const moduleArgs = [
+      "-p",
+      modulePath,
+      "--add-modules",
+      "ALL-MODULE-PATH",
+      "--add-opens",
+      "java.base/java.util.jar=cpw.mods.securejarhandler",
+      "--add-opens",
+      "java.base/java.lang.invoke=cpw.mods.securejarhandler",
+      "--add-exports",
+      "java.base/sun.security.util=cpw.mods.securejarhandler",
+      "--add-exports",
+      "jdk.naming.dns/com.sun.jndi.dns=java.naming",
+    ];
+
+    // Финальные аргументы
+    const finalJvmArgs = [...baseJvmArgs, ...moduleArgs, ...jvmArgs];
+
+    // Game аргументы
+    const finalGameArgs = [
+      ...gameArgs,
       "--username",
       username,
       "--version",
@@ -1506,7 +1830,7 @@ class MinecraftLauncher {
       "--assetsDir",
       path.join(instancePath, "assets"),
       "--assetIndex",
-      modpack.minecraft_version,
+      profile.assets || modpack.minecraft_version,
       "--uuid",
       this.generateOfflineUUID(username),
       "--accessToken",
@@ -1521,17 +1845,37 @@ class MinecraftLauncher {
       "480",
     ];
 
-    // ИСПРАВЛЕНИЕ: Финальная команда в правильном порядке
-    const allArgs = [...systemProperties, profile.mainClass, ...gameArgs];
+    // Окончательная команда
+    const allArgs = [...finalJvmArgs, profile.mainClass, ...finalGameArgs];
 
-    console.log("=== КОМАНДА ЗАПУСКА ===");
+    console.log("=== ДЕТАЛИ ЗАПУСКА ===");
     console.log(`Java: ${javaInfo.path}`);
     console.log(`Main Class: ${profile.mainClass}`);
+    console.log(`Memory: ${memory}`);
     console.log(`Natives: ${nativesDir}`);
-    console.log(`Module Path: да`);
-    console.log(`Args count: ${allArgs.length}`);
+    console.log(
+      `Module Path entries: ${modulePath.split(path.delimiter).length}`
+    );
+    console.log(`JVM args: ${finalJvmArgs.length}`);
+    console.log(`Game args: ${finalGameArgs.length}`);
+    console.log(`Total args: ${allArgs.length}`);
 
-    // Создаем дополнительные переменные окружения
+    // Логируем аргументы для проверки переменных
+    console.log("Проверяем аргументы на нерешенные переменные:");
+    const problematicArgs = allArgs.filter(
+      (arg) => typeof arg === "string" && arg.includes("${")
+    );
+    if (problematicArgs.length > 0) {
+      console.error("❌ Найдены аргументы с нерешенными переменными:");
+      problematicArgs.forEach((arg) => console.error(`  - ${arg}`));
+      throw new Error(
+        `Найдены нерешенные переменные в аргументах запуска: ${problematicArgs.join(
+          ", "
+        )}`
+      );
+    }
+
+    // Создаем переменные окружения
     const env = {
       ...process.env,
       // Очищаем конфликтующие переменные Java
@@ -1543,25 +1887,12 @@ class MinecraftLauncher {
       LC_ALL: "en_US.UTF-8",
       LANG: "en_US.UTF-8",
 
-      // Forge специфичные переменные
-      FORGE_FORCE_FRAME_RECALC: "true",
-
-      // Переменные для BootstrapLauncher
-      BOOTSTRAP_LAUNCH_TARGET: "cpw.mods.modlauncher.Launcher",
-
-      // Путь к библиотекам
-      LIBRARY_DIRECTORY: path.join(instancePath, "libraries"),
-
-      // Версия
+      // Forge/Minecraft переменные
       MC_VERSION: modpack.minecraft_version,
       FORGE_VERSION: modpack.forge_version,
-
-      // Assets
-      ASSETS_ROOT: path.join(instancePath, "assets"),
-      ASSETS_INDEX_NAME: modpack.minecraft_version,
-
-      // Game directory
       GAME_DIRECTORY: instancePath,
+      ASSETS_ROOT: path.join(instancePath, "assets"),
+      LIBRARY_DIRECTORY: path.join(instancePath, "libraries"),
     };
 
     console.log("Запускаем процесс...");
@@ -1874,6 +2205,15 @@ ipcMain.handle("save-username", async (event, username) => {
   try {
     launcher.config.last_username = username;
     launcher.saveConfig();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("diagnostic-check-libraries", async (event, modpackId) => {
+  try {
+    await launcher.diagnosticCheckLibraries(modpackId);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
