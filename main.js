@@ -1865,7 +1865,10 @@ class MinecraftLauncher {
     await this.fixTransformServices(instancePath, modpack);
 
     // === ПОСТРОЕНИЕ CLASSPATH С ПОЛНОЙ ДИАГНОСТИКОЙ ===
-    const classpath = await this.buildDebugClasspath(instancePath, modpack);
+    const modulePath = await this.buildClasspathFromForgeProfile(
+      instancePath,
+      modpack
+    );
 
     // === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===
     console.log("🎯 === ОПРЕДЕЛЕНИЕ LAUNCH TARGET ===");
@@ -1876,7 +1879,7 @@ class MinecraftLauncher {
     await this.finalPreLaunchValidation(
       instancePath,
       modpack,
-      classpath,
+      modulePath,
       launchTarget
     );
 
