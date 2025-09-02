@@ -746,9 +746,11 @@ class MinecraftLauncher {
     if (javaMainVersion >= 17) {
       args.push(
         // КРИТИЧНО: Полностью отключаем модульную систему Java
-        "-Djdk.module.path=",
-        "-Djdk.module.upgrade.path=",
-        "--illegal-access=permit", // Разрешаем все операции рефлексии
+        "-Djdk.module.main=false", // Отключить main модуль
+        "-Djdk.module.path=", // Пустой module path
+        "-Djdk.module.upgrade.path=", // Пустой upgrade path
+        "-Djdk.module.main.class=", // Убрать main class модуля
+        "-Dsun.java.launcher.is_modular=false", // Принудительно отключить модульность
 
         // Базовые пакеты
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
@@ -2002,30 +2004,46 @@ class MinecraftLauncher {
       "-XX:MaxGCPauseMillis=50",
       "-XX:G1HeapRegionSize=32M",
 
-      // ПРАВИЛЬНЫЕ аргументы для Forge модульной системы (из официальной документации)
-      "--add-modules",
-      "ALL-MODULE-PATH",
+      // КРИТИЧНО: Только --add-opens без модульной системы
       "--add-opens",
-      "java.base/java.util.jar=cpw.mods.securejarhandler",
-      "--add-exports",
-      "java.base/sun.security.util=cpw.mods.securejarhandler",
-      "--add-exports",
-      "jdk.naming.dns/com.sun.jndi.dns=java.naming",
+      "java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.lang.reflect=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.io=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.nio=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.nio.file=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.security=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.util=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/java.lang=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/sun.security.util=ALL-UNNAMED",
+      "--add-opens",
+      "java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-opens",
+      "java.desktop/java.awt=ALL-UNNAMED",
+      "--add-opens",
+      "java.desktop/javax.swing=ALL-UNNAMED",
 
-      // Дополнительные системные свойства для Forge
+      // Системные свойства для Forge
       `-DlegacyClassPath=${classpath}`,
-      `-DignoreList=bootstraplauncher-1.1.2.jar,securejarhandler-2.1.10.jar,asm-commons-9.5.jar,asm-util-9.5.jar,asm-analysis-9.5.jar,asm-tree-9.5.jar,asm-9.5.jar`,
+      `-DignoreList=bootstraplauncher-1.1.2.jar`,
       `-DlibraryDirectory=${path.join(instancePath, "libraries")}`,
 
-      // Стандартные системные свойства
+      // Стандартные настройки Minecraft
       "-Dfml.earlyprogresswindow=false",
       "-Dlog4j2.formatMsgNoLookups=true",
       `-Djava.library.path=${path.join(instancePath, "versions", "natives")}`,
       `-Dminecraft.launcher.brand=azurael-launcher`,
       `-Dminecraft.launcher.version=1.0.0`,
 
-      // Module path (важно для модульной системы)
-      "-p",
+      // ИСПРАВЛЕНИЕ: Используем -cp вместо -p для classpath
+      "-cp",
       classpath,
 
       // Главный класс
@@ -2034,7 +2052,7 @@ class MinecraftLauncher {
 
     const gameArgs = [
       "--launchTarget",
-      "forgeclient", // изменить тут тоже
+      "forgeclient",
       "--fml.mcVersion",
       modpack.minecraft_version,
       "--fml.forgeVersion",
@@ -2078,11 +2096,9 @@ class MinecraftLauncher {
       detached: false,
       env: {
         ...process.env,
-        // УБРАТЬ эти строки:
-        // JAVA_TOOL_OPTIONS: undefined,
-        // _JAVA_OPTIONS: undefined,
-
-        // Устанавливаем кодировку
+        // УБИРАЕМ проблемные переменные окружения
+        JAVA_TOOL_OPTIONS: undefined,
+        _JAVA_OPTIONS: undefined,
         LC_ALL: "en_US.UTF-8",
         LANG: "en_US.UTF-8",
       },
