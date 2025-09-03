@@ -313,21 +313,17 @@ class ProfileManager {
   async downloadMissingForgeJars(instancePath, profile) {
     console.log("Проверяем отсутствующие Forge JAR-файлы...");
 
-    // Сначала проверим, что именно ожидает Forge в classpath
     const libraries = profile.libraries || [];
 
-    // Ищем библиотеки minecraft и forge, которые могут содержать нужные нам файлы
+    // Ищем библиотеки minecraft client
     for (const lib of libraries) {
       if (!lib.downloads || !this.checkLibraryRules(lib)) continue;
 
-      // Проверяем библиотеки minecraft или forge
-      if (
-        lib.name.includes("net.minecraft:client") ||
-        lib.name.includes("net.minecraftforge:forge")
-      ) {
-        console.log(`Проверяем библиотеку: ${lib.name}`);
+      // Проверяем библиотеки minecraft client
+      if (lib.name.includes("net.minecraft:client")) {
+        console.log(`Проверяем minecraft client библиотеку: ${lib.name}`);
 
-        // Проверяем все доступные downloads в этой библиотеке
+        // Проверяем все classifiers в этой библиотеке
         if (lib.downloads.classifiers) {
           for (const [classifier, downloadInfo] of Object.entries(
             lib.downloads.classifiers
@@ -343,81 +339,120 @@ class ProfileManager {
             );
 
             if (!(await fs.pathExists(classifierPath))) {
-              console.log(
-                `Отсутствует classifier ${classifier}: ${downloadInfo.path}`
-              );
+              console.log(`Отсутствует: ${downloadInfo.path}`);
 
               try {
                 await fs.ensureDir(path.dirname(classifierPath));
-                await this.launcher.downloadFile(
-                  downloadInfo.url,
-                  classifierPath,
-                  null
-                );
-                console.log(
-                  `✓ Скачан classifier ${classifier}: ${path.basename(
-                    classifierPath
-                  )}`
-                );
+                await this.downloadFile(downloadInfo.url, classifierPath, null);
+                console.log(`✓ Скачан: ${path.basename(classifierPath)}`);
               } catch (error) {
                 console.error(
-                  `✗ Ошибка скачивания classifier ${classifier}: ${error.message}`
+                  `✗ Ошибка скачивания ${classifier}: ${error.message}`
                 );
 
-                // Для критически важных файлов пробуем альтернативные источники
-                if (
-                  classifier === "srg" ||
-                  classifier === "extra" ||
-                  classifier === "client"
-                ) {
-                  await this.tryAlternativeDownload(
-                    classifierPath,
-                    lib,
+                // Попробуем альтернативный способ для срг файлов
+                if (classifier === "srg" || classifier === "extra") {
+                  await this.downloadMinecraftArtifacts(
+                    instancePath,
+                    profile,
                     classifier
                   );
                 }
               }
             } else {
-              console.log(`✓ Classifier ${classifier} уже существует`);
+              console.log(`✓ Exists: ${path.basename(classifierPath)}`);
             }
           }
         }
+      }
 
-        // Проверяем основной artifact
-        if (lib.downloads.artifact) {
-          const artifactPath = path.join(
-            instancePath,
-            "libraries",
-            lib.downloads.artifact.path
-          );
+      // Проверяем forge библиотеки
+      if (lib.name.includes("net.minecraftforge:forge")) {
+        console.log(`Проверяем forge библиотеку: ${lib.name}`);
 
-          if (!(await fs.pathExists(artifactPath))) {
-            console.log(
-              `Отсутствует основной artifact: ${lib.downloads.artifact.path}`
+        // Проверяем все downloads
+        if (lib.downloads.classifiers) {
+          for (const [classifier, downloadInfo] of Object.entries(
+            lib.downloads.classifiers
+          )) {
+            const classifierPath = path.join(
+              instancePath,
+              "libraries",
+              downloadInfo.path
             );
 
-            try {
-              await fs.ensureDir(path.dirname(artifactPath));
-              await this.launcher.downloadFile(
-                lib.downloads.artifact.url,
-                artifactPath,
-                null
-              );
+            if (!(await fs.pathExists(classifierPath))) {
               console.log(
-                `✓ Скачан основной artifact: ${path.basename(artifactPath)}`
+                `Отсутствует forge ${classifier}: ${downloadInfo.path}`
               );
-            } catch (error) {
-              console.error(
-                `✗ Ошибка скачивания основного artifact: ${error.message}`
-              );
+
+              try {
+                await fs.ensureDir(path.dirname(classifierPath));
+                await this.downloadFile(downloadInfo.url, classifierPath, null);
+                console.log(
+                  `✓ Скачан forge ${classifier}: ${path.basename(
+                    classifierPath
+                  )}`
+                );
+              } catch (error) {
+                console.error(
+                  `✗ Ошибка скачивания forge ${classifier}: ${error.message}`
+                );
+              }
             }
           }
         }
       }
     }
+  }
 
-    // Дополнительная проверка: если файлы все еще отсутствуют, попробуем найти их через Minecraft Launcher
-    await this.downloadMinecraftClientFiles(instancePath, profile);
+  async downloadMinecraftArtifacts(instancePath, profile, artifactType) {
+    console.log(`Пытаемся скачать minecraft ${artifactType} артефакт...`);
+
+    const mcVersion = profile.id.split("-")[0]; // "1.20.1"
+    const mcpVersion = "20230612.114412"; // Из профиля можно извлечь из аргументов
+
+    try {
+      // Ищем MCP версию в аргументах профиля
+      const gameArgs = profile.arguments?.game || [];
+      let foundMcpVersion = null;
+
+      for (let i = 0; i < gameArgs.length - 1; i++) {
+        if (gameArgs[i] === "--fml.mcpVersion") {
+          foundMcpVersion = gameArgs[i + 1];
+          break;
+        }
+      }
+
+      if (foundMcpVersion) {
+        console.log(`Найдена MCP версия из профиля: ${foundMcpVersion}`);
+
+        const baseUrl =
+          "https://maven.minecraftforge.net/de/oceanlabs/mcp/mcp_config";
+        const artifactPath = path.join(
+          instancePath,
+          "libraries/net/minecraft/client",
+          `${mcVersion}-${foundMcpVersion}`,
+          `client-${mcVersion}-${foundMcpVersion}-${artifactType}.jar`
+        );
+
+        const downloadUrl = `${baseUrl}/${mcVersion}-${foundMcpVersion}/mcp_config-${mcVersion}-${foundMcpVersion}.zip`;
+
+        console.log(`Пытаемся скачать с: ${downloadUrl}`);
+
+        // Здесь нужна более сложная логика для извлечения нужных файлов из MCP config
+        // Для простоты пока пропустим
+        console.log(
+          `Пропускаем скачивание ${artifactType} - требует обработки MCP config`
+        );
+      } else {
+        console.log("MCP версия не найдена в профиле");
+      }
+    } catch (error) {
+      console.error(
+        `Ошибка при попытке скачать ${artifactType}: ${error.message}`
+      );
+    }
   }
 
   // НОВЫЙ МЕТОД: Скачивание файлов Minecraft клиента
