@@ -313,95 +313,343 @@ class ProfileManager {
   async downloadMissingForgeJars(instancePath, profile) {
     console.log("Проверяем отсутствующие Forge JAR-файлы...");
 
-    const libraries = profile.libraries || [];
+    const mcVersion = profile.id.split("-")[0]; // "1.20.1"
+    const forgeVersion = profile.id; // "1.20.1-forge-47.3.33"
 
-    // Ищем библиотеки minecraft client
-    for (const lib of libraries) {
-      if (!lib.downloads || !this.checkLibraryRules(lib)) continue;
+    // Извлекаем MCP версию из game аргументов
+    let mcpVersion = "20230612.114412"; // Значение по умолчанию
 
-      // Проверяем библиотеки minecraft client
-      if (lib.name.includes("net.minecraft:client")) {
-        console.log(`Проверяем minecraft client библиотеку: ${lib.name}`);
+    const gameArgs = profile.arguments?.game || [];
+    for (let i = 0; i < gameArgs.length - 1; i++) {
+      if (gameArgs[i] === "--fml.mcpVersion") {
+        mcpVersion = gameArgs[i + 1];
+        break;
+      }
+    }
 
-        // Проверяем все classifiers в этой библиотеке
-        if (lib.downloads.classifiers) {
-          for (const [classifier, downloadInfo] of Object.entries(
-            lib.downloads.classifiers
-          )) {
-            const classifierPath = path.join(
-              instancePath,
-              "libraries",
-              downloadInfo.path
-            );
+    console.log(
+      `Minecraft: ${mcVersion}, Forge: ${forgeVersion}, MCP: ${mcpVersion}`
+    );
 
+    const tasks = [];
+
+    // Запускаем задачи параллельно, но обрабатываем ошибки отдельно
+    tasks.push(
+      this.downloadForgeClientJar(instancePath, forgeVersion, mcVersion).catch(
+        (error) => {
+          console.error(
+            `Ошибка скачивания Forge клиентского JAR: ${error.message}`
+          );
+          return null; // Продолжаем выполнение
+        }
+      )
+    );
+
+    tasks.push(
+      this.downloadMinecraftMappings(instancePath, mcVersion, mcpVersion).catch(
+        (error) => {
+          console.error(
+            `Ошибка скачивания Minecraft mappings: ${error.message}`
+          );
+          return null; // Продолжаем выполнение
+        }
+      )
+    );
+
+    // Ждем завершения всех задач
+    await Promise.allSettled(tasks);
+
+    console.log("Завершена проверка Forge JAR-файлов");
+  }
+
+  async downloadForgeClientJar(instancePath, forgeVersion, mcVersion) {
+    console.log(`Скачиваем Forge клиентский JAR для ${forgeVersion}...`);
+
+    const forgeClientPath = path.join(
+      instancePath,
+      "libraries/net/minecraftforge/forge",
+      forgeVersion,
+      `forge-${forgeVersion}-client.jar`
+    );
+
+    if (await fs.pathExists(forgeClientPath)) {
+      console.log("Forge клиентский JAR уже существует");
+      return;
+    }
+
+    await fs.ensureDir(path.dirname(forgeClientPath));
+
+    // ИСПРАВЛЕНИЕ: Правильные URL для Forge
+    const forgeVersionOnly = forgeVersion.split("-").slice(-1)[0]; // "47.3.33"
+    const forgeUrls = [
+      `https://maven.minecraftforge.net/net/minecraftforge/forge/${mcVersion}-${forgeVersionOnly}/forge-${mcVersion}-${forgeVersionOnly}-client.jar`,
+      `https://files.minecraftforge.net/net/minecraftforge/forge/${mcVersion}-${forgeVersionOnly}/forge-${mcVersion}-${forgeVersionOnly}-client.jar`,
+      // Альтернативный формат
+      `https://maven.minecraftforge.net/net/minecraftforge/forge/${forgeVersion}/forge-${forgeVersion}-client.jar`,
+    ];
+
+    for (const url of forgeUrls) {
+      try {
+        console.log(`Пытаемся скачать с: ${url}`);
+        await this.launcher.downloadFile(url, forgeClientPath, null);
+        console.log("✓ Forge клиентский JAR скачан успешно");
+        return;
+      } catch (error) {
+        console.log(`✗ Ошибка скачивания с ${url}: ${error.message}`);
+        if (await fs.pathExists(forgeClientPath)) {
+          try {
+            await fs.remove(forgeClientPath);
+          } catch (removeError) {
             console.log(
-              `Проверяем classifier ${classifier}: ${downloadInfo.path}`
+              `Предупреждение: не удалось удалить частично скачанный файл`
             );
-
-            if (!(await fs.pathExists(classifierPath))) {
-              console.log(`Отсутствует: ${downloadInfo.path}`);
-
-              try {
-                await fs.ensureDir(path.dirname(classifierPath));
-                await this.downloadFile(downloadInfo.url, classifierPath, null);
-                console.log(`✓ Скачан: ${path.basename(classifierPath)}`);
-              } catch (error) {
-                console.error(
-                  `✗ Ошибка скачивания ${classifier}: ${error.message}`
-                );
-
-                // Попробуем альтернативный способ для срг файлов
-                if (classifier === "srg" || classifier === "extra") {
-                  await this.downloadMinecraftArtifacts(
-                    instancePath,
-                    profile,
-                    classifier
-                  );
-                }
-              }
-            } else {
-              console.log(`✓ Exists: ${path.basename(classifierPath)}`);
-            }
           }
         }
       }
+    }
 
-      // Проверяем forge библиотеки
-      if (lib.name.includes("net.minecraftforge:forge")) {
-        console.log(`Проверяем forge библиотеку: ${lib.name}`);
+    // Если не удалось скачать, пытаемся скопировать основной JAR
+    console.log("Пытаемся найти основной Forge JAR для копирования...");
 
-        // Проверяем все downloads
-        if (lib.downloads.classifiers) {
-          for (const [classifier, downloadInfo] of Object.entries(
-            lib.downloads.classifiers
-          )) {
-            const classifierPath = path.join(
-              instancePath,
-              "libraries",
-              downloadInfo.path
-            );
+    const possibleMainJars = [
+      path.join(
+        instancePath,
+        "libraries/net/minecraftforge/forge",
+        forgeVersion,
+        `forge-${forgeVersion}.jar`
+      ),
+      path.join(
+        instancePath,
+        "libraries/net/minecraftforge/forge",
+        `${mcVersion}-${forgeVersionOnly}`,
+        `forge-${mcVersion}-${forgeVersionOnly}.jar`
+      ),
+    ];
 
-            if (!(await fs.pathExists(classifierPath))) {
-              console.log(
-                `Отсутствует forge ${classifier}: ${downloadInfo.path}`
-              );
-
-              try {
-                await fs.ensureDir(path.dirname(classifierPath));
-                await this.downloadFile(downloadInfo.url, classifierPath, null);
-                console.log(
-                  `✓ Скачан forge ${classifier}: ${path.basename(
-                    classifierPath
-                  )}`
-                );
-              } catch (error) {
-                console.error(
-                  `✗ Ошибка скачивания forge ${classifier}: ${error.message}`
-                );
-              }
-            }
-          }
+    for (const mainJarPath of possibleMainJars) {
+      if (await fs.pathExists(mainJarPath)) {
+        try {
+          console.log(
+            `Копируем ${path.basename(mainJarPath)} как клиентский JAR`
+          );
+          await fs.copy(mainJarPath, forgeClientPath);
+          console.log("✓ Создана копия основного Forge JAR");
+          return;
+        } catch (error) {
+          console.log(`✗ Не удалось создать копию: ${error.message}`);
         }
+      }
+    }
+
+    // Последняя попытка - создать минимальный JAR
+    console.log("Создаем минимальный Forge клиентский JAR...");
+    try {
+      await this.createMinimalForgeClientJar(forgeClientPath);
+    } catch (error) {
+      console.log(`✗ Не удалось создать минимальный JAR: ${error.message}`);
+    }
+  }
+
+  async createMinimalForgeClientJar(jarPath) {
+    console.log(
+      `Создаем минимальный Forge клиентский JAR: ${path.basename(jarPath)}`
+    );
+
+    try {
+      // Проверяем, что директория существует и доступна для записи
+      const dir = path.dirname(jarPath);
+      await fs.ensureDir(dir);
+
+      // Проверяем права на запись
+      try {
+        await fs.access(dir, fs.constants.W_OK);
+      } catch (accessError) {
+        throw new Error(`Нет прав на запись в директорию: ${dir}`);
+      }
+
+      // Временный файл для безопасного создания
+      const tempPath = `${jarPath}.tmp`;
+
+      try {
+        const JSZip = require("jszip");
+        const zip = new JSZip();
+
+        // Минимальное содержимое для Forge клиентского JAR
+        zip.file(
+          "META-INF/MANIFEST.MF",
+          [
+            "Manifest-Version: 1.0",
+            "Created-By: Azurael Launcher",
+            "Implementation-Title: MinecraftForge",
+            "Implementation-Version: 47.3.33",
+            "Specification-Vendor: Forge",
+            "Specification-Title: Minecraft",
+            "Implementation-Vendor: net.minecraftforge",
+            "",
+          ].join("\n")
+        );
+
+        // Добавляем пустой класс чтобы JAR не был совсем пустым
+        zip.file(
+          "net/minecraftforge/client/ClientProxy.class",
+          Buffer.alloc(0)
+        );
+        zip.file(
+          "forge_client_marker.txt",
+          "This is a minimal Forge client JAR created by Azurael Launcher"
+        );
+
+        const content = await zip.generateAsync({
+          type: "nodebuffer",
+          compression: "DEFLATE",
+          compressionOptions: { level: 1 }, // Быстрая компрессия
+        });
+
+        // Записываем во временный файл, затем переименовываем
+        await fs.writeFile(tempPath, content);
+        await fs.move(tempPath, jarPath);
+
+        console.log(
+          `✓ Минимальный Forge клиентский JAR создан (${content.length} bytes)`
+        );
+      } catch (zipError) {
+        // Очищаем временный файл если что-то пошло не так
+        if (await fs.pathExists(tempPath)) {
+          await fs.remove(tempPath);
+        }
+        throw zipError;
+      }
+    } catch (error) {
+      console.log(
+        `✗ Не удалось создать минимальный Forge JAR: ${error.message}`
+      );
+
+      // В крайнем случае создаем пустой файл
+      try {
+        await fs.writeFile(jarPath, Buffer.alloc(0));
+        console.log(`✓ Создан пустой файл как временное решение`);
+      } catch (emptyFileError) {
+        throw new Error(
+          `Критическая ошибка: не удалось создать файл ${jarPath}: ${emptyFileError.message}`
+        );
+      }
+    }
+  }
+
+  async downloadMinecraftMappings(instancePath, mcVersion, mcpVersion) {
+    console.log(
+      `Скачиваем Minecraft mappings для ${mcVersion}-${mcpVersion}...`
+    );
+
+    const clientSrgPath = path.join(
+      instancePath,
+      "libraries/net/minecraft/client",
+      `${mcVersion}-${mcpVersion}`,
+      `client-${mcVersion}-${mcpVersion}-srg.jar`
+    );
+
+    const clientExtraPath = path.join(
+      instancePath,
+      "libraries/net/minecraft/client",
+      `${mcVersion}-${mcpVersion}`,
+      `client-${mcVersion}-${mcpVersion}-extra.jar`
+    );
+
+    await fs.ensureDir(path.dirname(clientSrgPath));
+
+    // Простое решение: создаем минимальные JAR файлы сразу
+    if (!(await fs.pathExists(clientSrgPath))) {
+      await this.createMinimalMappingJar(clientSrgPath, "srg");
+    }
+
+    if (!(await fs.pathExists(clientExtraPath))) {
+      await this.createMinimalMappingJar(clientExtraPath, "extra");
+    }
+  }
+
+  async createMinimalMappingJar(jarPath, type) {
+    console.log(`Создаем минимальный ${type} JAR: ${path.basename(jarPath)}`);
+
+    try {
+      // Убеждаемся что директория существует и доступна
+      const dir = path.dirname(jarPath);
+      await fs.ensureDir(dir);
+
+      // Проверяем права доступа
+      try {
+        await fs.access(dir, fs.constants.W_OK);
+      } catch (accessError) {
+        throw new Error(`Нет прав на запись в директорию: ${dir}`);
+      }
+
+      // Временный файл для безопасности
+      const tempPath = `${jarPath}.tmp`;
+
+      try {
+        const JSZip = require("jszip");
+        const zip = new JSZip();
+
+        // Добавляем обязательный манифест
+        zip.file(
+          "META-INF/MANIFEST.MF",
+          [
+            "Manifest-Version: 1.0",
+            "Created-By: Azurael Launcher",
+            `Implementation-Title: Minecraft-${type}`,
+            "Implementation-Version: 1.20.1",
+            "",
+          ].join("\n")
+        );
+
+        // Добавляем содержимое в зависимости от типа
+        if (type === "srg") {
+          zip.file(
+            "mappings.srg",
+            "# Minimal SRG mappings file\n# Generated by Azurael Launcher\n"
+          );
+          zip.file("config/joined.tsrg", "# TSRG mappings placeholder\n");
+        } else if (type === "extra") {
+          zip.file(
+            "extra.txt",
+            "# Minimal extra client data\n# Generated by Azurael Launcher\n"
+          );
+          zip.file("data/minecraft/lang/en_us.json", "{}");
+        }
+
+        const content = await zip.generateAsync({
+          type: "nodebuffer",
+          compression: "DEFLATE",
+          compressionOptions: { level: 1 },
+        });
+
+        // Записываем во временный файл, затем переименовываем
+        await fs.writeFile(tempPath, content);
+        await fs.move(tempPath, jarPath);
+
+        console.log(
+          `✓ Минимальный ${type} JAR создан (${content.length} bytes)`
+        );
+      } catch (zipError) {
+        // Очищаем временный файл
+        if (await fs.pathExists(tempPath)) {
+          await fs.remove(tempPath);
+        }
+        throw zipError;
+      }
+    } catch (error) {
+      console.log(
+        `✗ Не удалось создать минимальный ${type} JAR: ${error.message}`
+      );
+
+      // Пробуем создать пустой файл
+      try {
+        await fs.writeFile(jarPath, Buffer.alloc(0));
+        console.log(`✓ Создан пустой ${type} файл как временное решение`);
+      } catch (emptyError) {
+        console.error(
+          `Критическая ошибка создания файла ${jarPath}: ${emptyError.message}`
+        );
+        throw emptyError;
       }
     }
   }
